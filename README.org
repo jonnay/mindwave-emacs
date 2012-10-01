@@ -1,0 +1,11 @@
+#+title: Mindwave Emacs
+
+* A suite of neurological tools to work with emacs
+
+  This is a suite of neurological tools that works with the Neurosky mindwave and emacs.  It consists of the following packages:
+
+  - mindwave-emacs :: the base package which provides a low level set of tools to connect to the midnwave.
+  - solarized-mind :: displays your attention level through the background color of the screen.  Right now it is preset to the solarized-dark theme (hence the name)
+  - mindwave-display :: displays the current eSense and EEG power levels.
+  - gather-into-org :: an extra set of tools to gather the results into an org mode buffer
+  - 23-million-dollar-erisian :: more data gathering, but intended to be used in the long term

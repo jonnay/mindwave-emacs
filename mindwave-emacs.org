@@ -1469,12 +1469,16 @@ There are two ways to make a brain ring, either through ~mindwave/make-brain-rin
   ;; Averaging the brain ring can be a little dicey since we expect poorSignalLevel to be 0
   (defun mindwave/safe-div (dividend divisor) 
     "Another division function safe to use with averaging. 0 save-div 0 = 0"
-    (if (and (= 0 dividend)
-             (= 0 divisor))
+    (if (= 0 divisor)
         0
       (/ dividend divisor)))
   
-    
+  
+  (ert-deftest mindwave/safe-div () 
+    "test out safe div"
+    (should (equal (mindwave/safe-div 0 0) 0))
+    (should (equal (mindwave/safe-div 3 0) 0))
+    (should (equal (mindwave/safe-div 0 3) 0)))  
 #+end_src 
 
 
