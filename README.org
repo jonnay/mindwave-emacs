@@ -9,3 +9,21 @@
   - mindwave-display :: displays the current eSense and EEG power levels.
   - gather-into-org :: an extra set of tools to gather the results into an org mode buffer
   - 23-million-dollar-erisian :: more data gathering, but intended to be used in the long term
+
+* Installation
+
+** For using
+
+   Just copy the .el files to your load path, and away you go!  MELPA super-powers coming soon.
+
+** For hacking
+
+   The org file contains ALL the source code, from the base mindwave-emacs to the examples.  Just tangle it, and you're golden.
+
+* Documenation
+
+  Check the org file! It's chock full of examples and low-level documentation.
+
+* Changelog
+
+  - 0.1 :: constantly moving first version.  Very rapid development! (sorry!)
