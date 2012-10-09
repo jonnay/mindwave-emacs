@@ -27,6 +27,19 @@
   :type 'symbol
   :group '23-million-erisian)
 
+;; note, I do this a lot, maybe it is time to abstract it properly in mindwave-emacs
+(defun 23-million-erisian/start ()
+  "Start recording the 23 million erisian."
+  (interactive)
+  (mindwave-get-buffer)
+  (when (not (member '23-million-erisian/running-average-hook mindwave/brain-ring-full-hook))
+    (add-hook 'mindwave/brain-ring-full-hook '23-million-erisian/running-average-hook)))
+
+(defun 23-million-erisian/stop ()
+  "Stop recording the 23 million erisian"
+  (interactive)
+  (remove-hook 'mindwave/brain-ring-full-hook '23-million-erisian/running-average-hook))
+
 (defcustom 23-million-erisian/ring-averages-per-insertion 2
   "Number of insertions to put into the table every time the ring fills up.
 This is your effective resolution.  Here are some general approximations and timing:
@@ -128,4 +141,6 @@ Start by opening the file if we have to."
                     (mindwave/access-in 'eegPower 'theta brain)
                     (mindwave/access-in 'eegPower 'delta brain)
                     (mindwave/access-in 'eSense 'meditation brain)
-                    (mindwave/access-in 'eSense 'attention brain)))))
+                    (mindwave/access-in 'eSense 'attention brain)))))  
+
+(provide '23-million-dollar-erisian)

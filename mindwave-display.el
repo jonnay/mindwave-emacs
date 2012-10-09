@@ -72,8 +72,38 @@
     (mw-display/insert-eeg 'meditation 'eSense)
     (mw-display/insert-eeg 'attention 'eSense)
     (insert "\n")
-    (insert (pp-to-string mindwave/current))
+    (let ((current-pos (point)))
+      (insert (pp-to-string mindwave/current))
+      (goto-char current-pos)
+      (mw-display/write-hooks current-pos))
     (toggle-read-only 1)))
+
+(defconst mw-display/2nd-column 30)
+
+(defun mw-display/write-hooks (top)
+  (let ((mw-display/hdp top))
+    (mw-display/show-hook 'mindwave-hook)
+    (mw-display/show-hook 'mindwave-blink-hook)
+    (mw-display/show-hook 'mindwave-raw-eeg-hook)
+    (mw-display/show-hook 'mindwave-e-sense-hook)
+    (mw-display/show-hook 'mindwave-eeg-power-hook)
+    (mw-display/show-hook 'mindwave/brain-ring-full-hook)))
+
+(defun mw-display/show-hook (hook-name)
+  (move-to-column mw-display/2nd-column t)
+  (if (null (symbol-value hook-name))
+      (progn
+        (move-to-column mw-display/2nd-column t)
+        (insert (format "Hook: %s - Empty" hook-name))
+        (vertical-motion 1))
+      (progn 
+        (move-to-column mw-display/2nd-column t)
+        (insert (format "Hook: %s" hook-name))
+        (vertical-motion 1)
+        (dolist (hook (symbol-value hook-name))
+          (move-to-column mw-display/2nd-column t)
+          (insert (format "  * %s" (symbol-name hook)))
+          (vertical-motion 1)))))
 
 (defun mw-display/insert-eeg (band type)
   "Insert an eeg string.
@@ -109,6 +139,6 @@ If TYPE is eeg, the bargraph displayed will be out of 1 000 000"
                                :foreground "grey1"
                                :weight "ultra-bold")))))
 
-(mw-display/write-values)
   
+
   (provide 'mindwave-display)

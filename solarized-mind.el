@@ -58,3 +58,5 @@
 
 
 ;(set-face-attribute 'default nil :background (solarized-mind/attention-to-rgb 0))
+
+(provide 'solarized-mind)

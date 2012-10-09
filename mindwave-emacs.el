@@ -6,7 +6,7 @@
 ;; Author: Jonathan Arkell <jonnay@jonnay.net>
 ;; Created: 16 June 2012
 ;; Keywords: comint mindwave
-;; Version 0.1 
+;; Version 0.1.4
 
 ;; This file is not part of GNU Emacs.
 ;; Released under the GPL     
@@ -15,6 +15,13 @@
 ;; Please see the org-file that this was generated from.
 
 (require 'json)
+
+(defvar mindwave-debug nil)
+
+(defcustom mindwave-serial-port "/dev/tty.MindWave"
+  "Serial port that the mindwave is connected to."
+  :type 'string
+  :group 'mindwave-emacs)
 
 (defcustom mindwave-poor-signal-level 50
   "The signal level that mindwave-emacs should stop running hooks at.
@@ -39,8 +46,6 @@ senses connection problems.  This is generally between 0 and
 
 (defvar mindwave-buffer nil "Variable to store the buffer connected to the process")
 (defvar mindwave-process nil "Process that mindwave is connected")
-
-
 
 (defun mindwave-get-buffer ()
   "Returns the buffer for the mindwave connection"
@@ -68,7 +73,7 @@ Note that this function assumes that you'll only ever have one mindwave connecte
     (setq mindwave-serial-process (make-serial-process :port mindwave-serial-port
                                                        :speed mindwave-serial-baud
                                                        :coding-system 'binary
-                                                       :filter mindwave-serial-filter))))
+                                                       :filter mindwave-serial-filter-function))))
 
 (defun mindwave-send-string (str)
   "Helper function to send STRING directly to the mindwave.
@@ -107,8 +112,6 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
     (debug)
     (mindwave-if-in-list 'a '((a 1)) (setq r mw-result))
     (should r)))
-
-(defvar mindwave-debug nil)
 
 (defun mindwave-comint-filter-function (output)
   "A helper hook to pass off output to the apropriate hooks"
@@ -259,10 +262,16 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
 ;; Averaging the brain ring can be a little dicey since we expect poorSignalLevel to be 0
 (defun mindwave/safe-div (dividend divisor) 
   "Another division function safe to use with averaging. 0 save-div 0 = 0"
-  (if (and (= 0 dividend)
-           (= 0 divisor))
+  (if (= 0 divisor)
       0
     (/ dividend divisor)))
+
+
+(ert-deftest mindwave/safe-div () 
+  "test out safe div"
+  (should (equal (mindwave/safe-div 0 0) 0))
+  (should (equal (mindwave/safe-div 3 0) 0))
+  (should (equal (mindwave/safe-div 0 3) 0)))
 
 (defun mindwave/brain-ring-apply (fn ring1 ring2)
   "Takes the \"brain-rings\" RING1 and RING2 and runs FN on it's guts"
