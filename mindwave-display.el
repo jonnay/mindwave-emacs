@@ -52,31 +52,31 @@
 
 (defun mw-display/write-values ()
   "Actually write the values in the eeg buffer"
-  (save-excursion
-    (set-buffer "*mindwave-status*")
-    (toggle-read-only 0)
-    (erase-buffer)
-    (insert (propertize "   Mindwave Status  \n" 
-                        'face '(:background "white" :foreground "black")))
-    (insert (format "%3d Signal\n\n" 
-                    (cdr (assoc 'poorSignalLevel mindwave/current))))
-    (mw-display/insert-eeg 'delta 'eegPower)
-    (mw-display/insert-eeg 'theta 'eegPower)
-    (mw-display/insert-eeg 'lowAlpha 'eegPower)
-    (mw-display/insert-eeg 'highAlpha 'eegPower)
-    (mw-display/insert-eeg 'lowBeta 'eegPower)
-    (mw-display/insert-eeg 'highBeta 'eegPower)
-    (mw-display/insert-eeg 'lowGamma 'eegPower)
-    (mw-display/insert-eeg 'highGamma 'eegPower)
-    (insert "\n")
-    (mw-display/insert-eeg 'meditation 'eSense)
-    (mw-display/insert-eeg 'attention 'eSense)
-    (insert "\n")
-    (let ((current-pos (point)))
-      (insert (pp-to-string mindwave/current))
-      (goto-char current-pos)
-      (mw-display/write-hooks current-pos))
-    (toggle-read-only 1)))
+  (let ((inhibit-read-only t))
+    (with-current-buffer "*mindwave-status*"
+      (erase-buffer)
+      (insert (propertize "   Mindwave Status  \n" 
+                          'face '(:background "white" :foreground "black")))
+      (insert (format "%3d Signal     Serial (%d/%d)\n\n" 
+                      (cdr (assoc 'poorSignalLevel mindwave/current))
+                      mindwave-serial--bad-packets
+                      mindwave-serial--total-packets))
+      (mw-display/insert-eeg 'delta 'eegPower)
+      (mw-display/insert-eeg 'theta 'eegPower)
+      (mw-display/insert-eeg 'lowAlpha 'eegPower)
+      (mw-display/insert-eeg 'highAlpha 'eegPower)
+      (mw-display/insert-eeg 'lowBeta 'eegPower)
+      (mw-display/insert-eeg 'highBeta 'eegPower)
+      (mw-display/insert-eeg 'lowGamma 'eegPower)
+      (mw-display/insert-eeg 'highGamma 'eegPower)
+      (insert "\n")
+      (mw-display/insert-eeg 'meditation 'eSense)
+      (mw-display/insert-eeg 'attention 'eSense)
+      (insert "\n")
+      (let ((current-pos (point)))
+        (insert (pp-to-string mindwave/current))
+        (goto-char current-pos)
+        (mw-display/write-hooks current-pos)))))
 
 (defconst mw-display/2nd-column 30)
 
@@ -84,7 +84,6 @@
   (let ((mw-display/hdp top))
     (mw-display/show-hook 'mindwave-hook)
     (mw-display/show-hook 'mindwave-blink-hook)
-    (mw-display/show-hook 'mindwave-raw-eeg-hook)
     (mw-display/show-hook 'mindwave-e-sense-hook)
     (mw-display/show-hook 'mindwave-eeg-power-hook)
     (mw-display/show-hook 'mindwave/brain-ring-full-hook)))

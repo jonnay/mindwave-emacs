@@ -125,7 +125,7 @@ Start by opening the file if we have to."
   "Writes the running average.  used as part of a run-timer"
   (let ((time (decode-time)))
                     ;   y     m     d     h     m    s      g     g    b      b     a     a    t      d     m     a     
-    (insert (format "| %4s | %5s | %3s | %4s | %6s | %6s | %9s | %8s | %8s | %7s | %9s | %8s | %8s | %10s | %10s | %9s | \n"
+    (insert (format "| %4s | %5s | %3s | %4s | %6s | %6s | %9s | %8s | %8s | %7s | %9s | %8s | %8s | %10s | %10s | %9s | %s | \n"
                     (nth 5 time)
                     (nth 4 time)
                     (nth 3 time)
@@ -141,6 +141,7 @@ Start by opening the file if we have to."
                     (mindwave/access-in 'eegPower 'theta brain)
                     (mindwave/access-in 'eegPower 'delta brain)
                     (mindwave/access-in 'eSense 'meditation brain)
-                    (mindwave/access-in 'eSense 'attention brain)))))  
+                    (mindwave/access-in 'eSense 'attention brain)
+                    23-million-erisian/mark))))  
 
 (provide '23-million-dollar-erisian)

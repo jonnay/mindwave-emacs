@@ -753,31 +753,31 @@ recording session.
   
   (defun mw-display/write-values ()
     "Actually write the values in the eeg buffer"
-    (save-excursion
-      (set-buffer "*mindwave-status*")
-      (toggle-read-only 0)
-      (erase-buffer)
-      (insert (propertize "   Mindwave Status  \n" 
-                          'face '(:background "white" :foreground "black")))
-      (insert (format "%3d Signal\n\n" 
-                      (cdr (assoc 'poorSignalLevel mindwave/current))))
-      (mw-display/insert-eeg 'delta 'eegPower)
-      (mw-display/insert-eeg 'theta 'eegPower)
-      (mw-display/insert-eeg 'lowAlpha 'eegPower)
-      (mw-display/insert-eeg 'highAlpha 'eegPower)
-      (mw-display/insert-eeg 'lowBeta 'eegPower)
-      (mw-display/insert-eeg 'highBeta 'eegPower)
-      (mw-display/insert-eeg 'lowGamma 'eegPower)
-      (mw-display/insert-eeg 'highGamma 'eegPower)
-      (insert "\n")
-      (mw-display/insert-eeg 'meditation 'eSense)
-      (mw-display/insert-eeg 'attention 'eSense)
-      (insert "\n")
-      (let ((current-pos (point)))
-        (insert (pp-to-string mindwave/current))
-        (goto-char current-pos)
-        (mw-display/write-hooks current-pos))
-      (toggle-read-only 1)))
+    (let ((inhibit-read-only t))
+      (with-current-buffer "*mindwave-status*"
+        (erase-buffer)
+        (insert (propertize "   Mindwave Status  \n" 
+                            'face '(:background "white" :foreground "black")))
+        (insert (format "%3d Signal     Serial (%d/%d)\n\n" 
+                        (cdr (assoc 'poorSignalLevel mindwave/current))
+                        mindwave-serial--bad-packets
+                        mindwave-serial--total-packets))
+        (mw-display/insert-eeg 'delta 'eegPower)
+        (mw-display/insert-eeg 'theta 'eegPower)
+        (mw-display/insert-eeg 'lowAlpha 'eegPower)
+        (mw-display/insert-eeg 'highAlpha 'eegPower)
+        (mw-display/insert-eeg 'lowBeta 'eegPower)
+        (mw-display/insert-eeg 'highBeta 'eegPower)
+        (mw-display/insert-eeg 'lowGamma 'eegPower)
+        (mw-display/insert-eeg 'highGamma 'eegPower)
+        (insert "\n")
+        (mw-display/insert-eeg 'meditation 'eSense)
+        (mw-display/insert-eeg 'attention 'eSense)
+        (insert "\n")
+        (let ((current-pos (point)))
+          (insert (pp-to-string mindwave/current))
+          (goto-char current-pos)
+          (mw-display/write-hooks current-pos)))))
   
   (defconst mw-display/2nd-column 30)
   
@@ -785,7 +785,6 @@ recording session.
     (let ((mw-display/hdp top))
       (mw-display/show-hook 'mindwave-hook)
       (mw-display/show-hook 'mindwave-blink-hook)
-      (mw-display/show-hook 'mindwave-raw-eeg-hook)
       (mw-display/show-hook 'mindwave-e-sense-hook)
       (mw-display/show-hook 'mindwave-eeg-power-hook)
       (mw-display/show-hook 'mindwave/brain-ring-full-hook)))
@@ -1204,14 +1203,14 @@ Of course, this is purely just for the data alone, not for any kind of other sto
 
 **** Return lowlevel connection variables 
 #+begin_src emacs-lisp :tangle yes
-  (defalias mindwave-connect 'mindwave-get-buffer)
+  (defalias 'mindwave-connect 'mindwave-get-buffer)
   
   (defun mindwave-get-buffer ()
     "Returns a mindwave buffer.
   The connection type is dependent on the `mindwvave-connection-type' variable."
     (if mindwave-connect-with-serial
-        (mindwave-get-serial-buffer)
-      (mindwave-get-thinkgear-buffer)))
+        (setq mindwave-buffer (process-buffer (mindwave-make-serial-process)))
+      (mindwave-thinkgear-buffer)))
 #+end_src
 
 ***** ThinkGear Connector
@@ -1223,7 +1222,7 @@ According to the documentation of make-comint, if a running process is on the bu
     "Returns the buffer for the mindwave connection"
     (if (and mindwave-process (process-live-p mindwave-process))
         mindwave-process
-        (progn
+        (if (progn
           (setq mindwave-buffer (make-comint "mindwave" (cons mindwave-host mindwave-port)))
           (setq mindwave-process (get-buffer-process mindwave-buffer))
           (save-excursion
@@ -1235,8 +1234,7 @@ According to the documentation of make-comint, if a running process is on the bu
             (mindwave-get-raw nil)
             (sleep-for 1)
             (add-hook 'comint-preoutput-filter-functions 'mindwave-comint-filter-function nil t))
-          mindwave-buffer)))
-  
+          mindwave-buffer))))  
 #+end_src
 
 ***** Raw Serial
@@ -1248,20 +1246,27 @@ For now, we're going to assume that only a single serial port will be connected 
   (defun mindwave-make-serial-process ()
     "Creates a serial process for mindwave, or returns the current one if it exists.
   Note that this function assumes that you'll only ever have one mindwave connected."
-    (if (process-live-p mindwave-serial-process)
-        mindwave-serial-process
-      (setq mindwave-serial-process (make-serial-process :port mindwave-serial-port
-                                                         :speed mindwave-serial-baud
-                                                         :coding-system 'binary
-                                                         :filter mindwave-serial-filter-function))))
+    (setq mindwave-serial--bad-packets 0)
+    (setq mindwave-serial--total-packets 0)
+    (if (and mindwave-process
+             (process-live-p mindwave-process))
+        mindwave-process
+      (setq mindwave-process 
+            (apply 'make-serial-process 
+                   :port mindwave-serial-port
+                   :speed mindwave-serial-baud
+                   :coding-system 'binary
+                   :filter 'mindwave-serial/filter-function
+                   :buffer "*mindwave*"
+                   '()))))
 #+end_src
 
 Note that since we are in development mode right now, we are not going
 to detach the buffer yet (but will soon). I think this can be done by
 using ~:buffer nil~ in the make-serial-process args, but if not,
-~(set-process-buffer mindwave-serial-process nil)~ should work.  Of
+~(set-process-buffer mindwave-process nil)~ should work.  Of
 course, if we do that, we'll need to make sure the last form on that
-function is ~mindwave-serial-process~ so it properly returns a process!
+function is ~mindwave-process~ so it properly returns a process!
 
 ** Sending Data
 #+name: get raw
@@ -1269,7 +1274,9 @@ function is ~mindwave-serial-process~ so it properly returns a process!
 (defun mindwave-send-string (str)
   "Helper function to send STRING directly to the mindwave.
 Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configuration."
-  (comint-send-string mindwave-process str))
+  (if mindwave-connect-with-serial
+      (process-send-string mindwave-process str)
+      (comint-send-string mindwave-process str)))
 #+end_src
 
 ** Recieving Data
@@ -1278,7 +1285,8 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
    
    - hook functions :: Whenever mindwave-emacs receives a particular piece of data, that hook is called with that data.  This (for instance) makes it easy to listen to only the attention/meditation levels from the mindwave.
    - current state :: You can also peek at the last-known values from the mindwave.
-   - brain ring :: Finally, mindwave-emacs keeps track of the last 30 results, and stares them in a hook 
+   - brain ring :: mindwave-emacs keeps track of the last 30 results, and stares them in a hook
+   - eeg ring :: If you have raw eeg data turned on, midnwave emacs will store those values in a ring for you, so they are consumable.  
 
 *** The hooks
 
@@ -1289,7 +1297,6 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
 #+begin_src emacs-lisp :tangle yes
 (defvar mindwave-hook '() "Hooks to run when mindwave gets standard input\nShould be a in a list that conforms to the json output.")
 (defvar mindwave-blink-hook '() "Hooks to run when mindwave gets blink input")
-(defvar mindwave-raw-eeg-hook '() "Hooks to run when mindwave gets raw eeg input.\n Note that you can get up to 512 of these events per second!")
 (defvar mindwave-e-sense-hook '() "Hooks to run when mindwave gets an eSense(tm) reading")
 (defvar mindwave-eeg-power-hook '() "Hooks to run when mindwave gets an eegPower reading")
 #+end_src
@@ -1316,21 +1323,15 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
 **** ~mindwave-blink-hook~ 
 	 Called when a blink message is received. 
 
-**** ~mindwave-raw-eeg-hook~ 
-	 Called when raw EEG messages are received from the mindwave.  No timing guarantees are made.
-
 **** ~mindwave-e-sense-hook~ 
 	 Called when an eSense message is received (meditation/attention)
 
 **** ~mindwave-eeg-power-hook~ 
 	 Called when eegPower messages are received.
-
 **** Low level details for the hooks 
 ***** comint filter function for json style 
 ***** Low Level serial Hook 
 ****** Packet format (header):
-
-
 #+begin_example
 [SYNC] [SYNC] [PLENGTH]   [PAYLOAD...]    [CHKSUM] 
 _______________________   _____________   ____________ 
@@ -1367,14 +1368,70 @@ ____________________   ____________   ___________
 		   - low-beta,
 		   - high-beta,
 		   - low-gamma, and
-		   - mid-gamma 
+		   - mid-gamma
+         - 0xd2 :: unknown
+         - 0xd4 :: unknonw 
 	   - value :: 
 
-
-#+begin_src emacs-lisp :tangle yes
+****** Serial Filter
+         39         
+-- -- -x AA AA LL
+            || 
+            end 40 
+#name: mw-serial
+#+begin_src emacs-lisp :tangle yes 
+  ;; In the spirit of 3 strikes and refactor, once you touch this, or mindwave-serial/filter-function
+  ;; make sure to refactor them to a common function.
+  
   (defun mindwave-serial/filter-function (process output)
+    "Sends input to parser and triggers the hooks."
+    (loop for brain
+          in (mindwave-serial/parse-packets process output)
+          do
+          (mindwave-if-in-list 'blinkStrength  brain
+            (mindwave/set-current 'blinkStrength  mw-result)
+            (run-hook-with-args 'mindwave-blink-hook mw-result))
+          (run-hook-with-args 'mindwave-hook brain)
+          (if (and (assoc 'poorSignalLevel brain)
+                   (> (cdr (assoc 'poorSignalLevel brain))
+                      mindwave-poor-signal-level))
+              (progn 
+                (when (assoc 'poorSignalLevel brain)
+                  (mindwave/set-current 'poorSignalLevel (cdr (assoc 'poorSignalLevel brain)))
+                  (run-hook-with-args 'mindwave-poor-signal-hook 
+                                      (cdr (assoc 'poorSignalLevel brain)))))
+            (progn
+              (mindwave-if-in-list 'poorSignalLevel brain
+                (mindwave/set-current 'poorSignalLevel mw-result)
+                (run-hook-with-args 'mindwave-poor-signal-hook mw-result))
+              (mindwave-if-in-list 'eSense brain
+                (mindwave/set-current 'eSense mw-result)
+                (run-hook-with-args mindwave-e-sense-hook mw-result))                
+              (mindwave-if-in-list 'eegPower brain
+                (mindwave/set-current 'eegPower mw-result)
+                (run-hook-with-args 'mindwave-eeg-power-hook mw-result)
+                (mindwave/brain-ring-update brain)))))
+    (when mindwave-debug
+      (with-current-buffer "*mindwave*"
+        (goto-char (point-max))
+        (if mindwave-debug (insert output)))))
+  
+#+end_src
+
+#+name: mw-serial-parse
+#+begin_src emacs-lisp :tangle yes
+  (defvar mindwave-serial--partial-packet nil)
+  
+  (defvar mindwave-serial--bad-packets 0)
+  (defvar mindwave-serial--total-packets 0)
+  
+  (defun mindwave-serial/parse-packets (process output)
     "Lower level serial filter function.
-  Returns a lit of mindwave-emacs compatible lists, with no guarantee of order."
+    Returns a lit of mindwave-emacs compatible lists, with no guarantee of order.
+    Note that this also inserts the raw eeg into the raw eeg ring."
+    (when (not (null mindwave-serial--partial-packet))
+      (setq output (concat mindwave-serial--partial-packet output))
+      (setq mindwave-serial--partial-packet nil))
     (let ((pos 0)
           (end (length output))
           (dlen 0)
@@ -1385,82 +1442,116 @@ ____________________   ____________   ___________
           (blink '())
           (raw nil)
           (out-packets '()))
-      (while (< pos end)
-        (if (and (= #xAA
-                    (aref output pos))
-                 (= #xAA
-                    (aref output (+ 1 pos))))
-            (let ((plen (aref output (+ 2 pos))))
-              
-              (when (not (= (aref output (+ 3 plen pos))
-                            (mindwave/checksum-bytestream (substring output 
-                                                                     (+ pos 3) 
-                                                                     (+ plen pos 3)))))
-                (error "Mindwave: Checksum doesn't match. (Expected %s got %s)"
-                       (aref output (+ plen 3 pos))
-                       (mindwave/checksum-bytestream (substring output
-                                                                (+ pos 3) 
-                                                                (+ plen pos 3)))))
-              (setq pos (+ 3 pos))
-              (while (< pos (+ plen 3))
-                (if (> #x80 (aref output pos))
-                    (progn
-                      (case (aref output pos)
-                        (#x02 (add-to-list 'packet (cons 'poorSignalLevel 
-                                                        (aref output (+ 1 pos)))))
-                        (#x04 (add-to-list 'eSense (cons 'attention 
-                                                         (aref output (+ 1 pos)))))
-                        (#x05 (add-to-list 'eSense (cons 'meditation 
-                                                         (aref output (+ 1 pos))) t))
-                        (#x16 (add-to-list 'packet (cons 'blinkStrength 
-                                                         (aref output (+ 1 pos))) t))
-                        (t (message "Mindwave: unknown unibyte type %s with data %s"
-                                    (aref output pos)
-                                    (aref output (+ 1 pos)))))
-                      (setq pos (+ 2 pos)))
+      (setq mindwave-serial--partial-packet
+            (catch 'partial-packet-received
+              (while (< pos end)
+                (when  (<= end (+ pos 3))
+                  (setq mindwave-serial--partial-packet (substring output pos))
+                  (throw 'partial-packet-received (substring output pos)))
+                (if (and (= #xAA
+                            (aref output pos))
+                         (= #xAA
+                            (aref output (+ 1 pos))))
+                    (let ((plen (aref output (+ 2 pos))))
+                      (when (<= end (+ pos 3 plen))
+                        (setq mindwave-serial--partial-packet (substring output pos))
+                        (throw 'partial-packet-received (substring output pos)))
+                      (setq mindwave-serial--total-packets (1+ mindwave-serial--total-packets))
+                      (if (and (not (= 0 plen))
+                               (= (aref output (+ 3 plen pos))
+                                  (mindwave-serial/checksum-bytestream
+                                   (substring output 
+                                              (+ pos 3) 
+                                              (+ plen pos 3)))))
+                          (mindwave-serial--parse-data)
+                        (progn 
+                          (setq mindwave-serial--bad-packets (1+ mindwave-serial--bad-packets))
+                          (if mindwave-debug (message "Mindwave: Checksum doesn't match, or got a zero length packet. [%s]" (substring output pos (+ 3 plen pos))))
+                          (setq pos (1+ pos)))))
                   (progn 
-                    (case (aref output pos)
-                      (#x80 (setq raw (mindwave/2byte-word-to-int (aref output (+ 2 pos))
-                                                                    (aref output (+ 3 pos)))))
-                      (#x83 (setq eegPower
-                                    (list (mindwave-serial/make-eeg-list 'delta 2)
-                                          (mindwave-serial/make-eeg-list 'theta 5)
-                                          (mindwave-serial/make-eeg-list 'lowAlpha 8)
-                                          (mindwave-serial/make-eeg-list 'highAlpha 11)
-                                          (mindwave-serial/make-eeg-list 'lowBeta 14)
-                                          (mindwave-serial/make-eeg-list 'highBeta 17)
-                                          (mindwave-serial/make-eeg-list 'lowGamma 20)
-                                          (mindwave-serial/make-eeg-list 'highGamma 23))))
-                      (t (message "Mindwave unknown multibyte type %s" (aref output pos))))
-                    (setq pos (+ pos 
-                                 (aref output (+ pos 1)) 
-                                 2))))))
-          (error "No proper sync packets"))
-        (add-to-list 'out-packets (append packet 
-                                          (if (not (null raw))
-                                              (cons (cons 'rawEeg raw)
-                                                    '()))
-                                          (if (not (null eSense))
-                                              (cons (cons 'eSense eSense)
-                                                    '()))                          
-                                          (if (not (null eegPower))
-                                              (cons (cons 'eegPower eegPower)
-                                                    '()))))
-        (setq raw '()
-              eSense '()
-              eegPower '()
-              blinkStrength '()
-              packet '()
-              pos (+ 1 pos)))
-      out-packets))
+                    (setq pos (1+ pos)))))
+              nil))
+      (nreverse (delq nil out-packets))))
   
-  (ert-deftest mindwave-serial/filter-test ()
-      "test the lowlevel serial interface"
-    (should-error (mindwave-serial-filter-function nil "xx"))
-    (let ((packet (concat (list #xAA #xAA #x20 #x02 #x00 #x83 #x18 #x00 #x00 #x94 #x00 #x00 #x42 #x00 #x00 #x0B #x00 #x00 #x64 #x00 #x00 #x4D #x00 #x00 #x3D #x00 #x00 #x07 #x00 #x00 #x05 #x04 #x0D #x05 #x3D #x34))))
-      (should-not (null (mindwave-serial-filter-function nil packet)))
-      
-      (should-equal (mindwave-serial/filter-function nil packet)
+  (defmacro mindwave-serial--parse-data ()
+    '(progn 
+       (setq pos (+ 3 pos))
+       (let ((innerlen (+ pos plen)))
+         (while (< pos innerlen)
+           (if (> #x80 (aref output pos))
+               (progn
+                 (case (aref output pos)
+                   (#x02 (add-to-list 'packet (cons 'poorSignalLevel 
+                                                    (aref output (+ 1 pos)))))
+                   (#x04 (add-to-list 'eSense (cons 'attention 
+                                                    (aref output (+ 1 pos)))))
+                   (#x05 (add-to-list 'eSense (cons 'meditation 
+                                                    (aref output (+ 1 pos))) t))
+                   (#x16 (add-to-list 'packet (cons 'blinkStrength 
+                                                    (aref output (+ 1 pos))) t))
+                   (t (message "Mindwave: unknown unibyte type %s with data %s"
+                               (aref output pos)
+                               (aref output (+ 1 pos)))))
+                 (setq pos (+ 2 pos)))
+             (progn 
+               (case (aref output pos)
+                 (#x80 (setq raw 
+                             (mindwave-serial/2byte-sword-to-int (aref output (+ 2 pos))
+                                                                 (aref output (+ 3 pos)))))
+                 (#x83 (setq eegPower
+                             (list (mindwave-serial/make-eeg-list 'delta 2)
+                                   (mindwave-serial/make-eeg-list 'theta 5)
+                                   (mindwave-serial/make-eeg-list 'lowAlpha 8)
+                                   (mindwave-serial/make-eeg-list 'highAlpha 11)
+                                   (mindwave-serial/make-eeg-list 'lowBeta 14)
+                                   (mindwave-serial/make-eeg-list 'highBeta 17)
+                                   (mindwave-serial/make-eeg-list 'lowGamma 20)
+                                   (mindwave-serial/make-eeg-list 'highGamma 23))))
+                 (208 (message "Mindwave Got Packet with id 208. Full packet: %s" (append output '()))) ;; Not entirely sure what these packets mean
+                 (210 (message "Mindwave Got Packet with id 210. Full packet: %s" (append output '()))) ;;
+                 (212 (message "Mindwave Got Packet with id 212. Full packet: %s" (append output '()))) ;;
+                 (t (message "Mindwave unknown multibyte type %s" (aref output pos))))
+               (setq pos (+ pos 
+                            (aref output (+ pos 1)) 
+                            2)))))
+         (setq out-packets 
+               (cons (append packet 
+                             (if (not (null eSense))
+                                 (cons (cons 'eSense eSense)
+                                       '()))                          
+                             (if (not (null eegPower))
+                                 (cons (cons 'eegPower eegPower)
+                                       '())))
+                     out-packets))
+         (if raw (ring-insert mindwave-eeg-ring raw))
+         (setq raw '()
+               eSense '()
+               eegPower '()
+               packet '()
+               pos (+ pos 1)))))
+  
+  
+  (ert-deftest mindwave-serial/null-length-packet-test ()
+    "For some reason it looks like the mindwave can throw packets of zero length.  Annoying."
+    (should (equal (mindwave-serial/parse-packets nil "ªª ­Ï")
+                   nil)))
+  
+  (ert-deftest mindwave-serial/checksum-fail-test () 
+    "failed checksums should not contain data."
+    (let* ((2nd-data (concat "" (list #x02 #x00
+                                   #x04 #x23
+                                   #x05 #x46)))
+           (2nd-data-checksum (mindwave-serial/checksum-bytestream 2nd-data))
+           (packet (concat (list #xAA #xAA #x20 #x02 #x00 #x83 #x18 #x00 #x00 #x94 #x00 #x00 #x42 #x00 #x00 #x0B #x00 #x00 #x64 #x00 #x00 #x4D #x00 #x00 #x3D #x00 #x00 #x07 #x00 #x00 #x05 #x04 #x0D #x05 #x3D #x34)
+                           (list #xAA #xAA #x06 
+                                 #x02 #x00
+                                 #x04 #x01
+                                 #x05 #x04
+                                 #xff)
+                           (list #xAA #xAA #x06) 
+                           2nd-data
+                           (list 2nd-data-checksum))))
+      (should-equal (mindwave-serial/parse-packets nil packet)
                     '(((poorSignalLevel . 0)
                        (eSense . ((attention . 13) 
                                   (meditation . 61)))
@@ -1471,7 +1562,100 @@ ____________________   ____________   ___________
                                     (lowBeta . #x4d)
                                     (highBeta . #x3d)
                                     (lowGamma . #x07)
-                                    (highGamma . #x05)))))))
+                                    (highGamma . #x05))))
+                      ((poorSignalLevel . 0)
+                       (eSense . ((attention . #x23) 
+                                  (meditation . #x46))))))))
+  
+    (ert-deftest mindwave-serial/partial-packet-test () 
+      "Test parital packets being received"
+      (let ((packet1 (concat '(170 170 4 128 2 0 102 23 170 170 4 128 2 0 107 18 170 170 4 128 2 0 96 29 170 170 4 128 2 0)))
+            (packet2 (concat '(71 54 170 170 4 128 2 0 41 84 170 170 4 128 2 0)))
+            (packet3 (concat '(5) (list (mindwave-serial/checksum-bytestream (concat '(128 2 0 5)))) '(170)))
+            (packet4 (concat '(170 4 128 2 0 0) 
+                             (list (mindwave-serial/checksum-bytestream (concat '(128 2 0 0)))))))
+        (setq mindwave-serial--partial-packet nil)
+        (setq mindwave-eeg-ring (make-ring mindwave-eeg-ring-size))
+        (should-equal (mindwave-serial/parse-packets nil packet1)
+                      '())
+        (should-equal (delq nil (ring-elements mindwave-eeg-ring))
+                      '(96 107 102))
+        (should-equal mindwave-serial--partial-packet (concat '(170 170 4 128 2 0)))
+        (should-equal (mindwave-serial/parse-packets nil packet2)
+                      '())
+        (should-equal (delq nil (ring-elements mindwave-eeg-ring))
+                      '(41 71 96 107 102))
+        (should-equal (mindwave-serial/parse-packets nil packet3)
+                      '())
+        (should-equal (delq nil (ring-elements mindwave-eeg-ring))
+                      '(5 41 71 96 107 102))
+        (should-equal mindwave-serial--partial-packet (concat '(170)))
+        (should-equal (mindwave-serial/parse-packets nil packet4)
+                      '())
+        (should-equal (delq nil (ring-elements mindwave-eeg-ring))
+                      '(0 5 41 71 96 107 102))
+        (should-equal mindwave-serial--partial-packet nil)))
+  
+  
+  (ert-deftest mindwave-serial/actual-data-barf-tests ()
+    "Sometimes I get barfage from actual data."
+    (mindwave-serial/parse-packets nil "ªª 
+  ")
+    (mindwave-serial/parse-packets nil "ªª 6Gªª D9ªª F7ªª ;Bªª 3Jªª fªªÿíªªÿèªª 
+  sªª )Tªª +Rªª gªª iªª #Zªª bªª xªª 
+  sªª dªª wªªÿÝ¡ªªÿÕ©ªªÿù")
+    (mindwave-serial/parse-packets nil "ªª 6Gªª D9ªª F7ªª ;Bªª 3Jªª fªªÿíªªÿèªª 
+  sªª )Tªª +Rªª gªª iªª #Zªª bªª xªª 
+  sªª dªª wªªÿÝ¡ªªÿÕ©ªªÿùªª 
+  "))
+  
+  (ert-deftest mindwave-serial/filter-test ()
+    "test the lowlevel serial interface"
+    (should-error (mindwave-serial/parse-packets nil "xx"))
+    (let ((packet (concat (list #xAA #xAA #x20 #x02 #x00 #x83 #x18 #x00 #x00 #x94 #x00 #x00 #x42 #x00 #x00 #x0B #x00 #x00 #x64 #x00 #x00 #x4D #x00 #x00 #x3D #x00 #x00 #x07 #x00 #x00 #x05 #x04 #x0D #x05 #x3D #x34))))
+      (should-not (null (mindwave-serial/parse-packets nil packet)))
+      
+      (should-equal (mindwave-serial/parse-packets nil packet)
+                    '(((poorSignalLevel . 0)
+                       (eSense . ((attention . 13) 
+                                  (meditation . 61)))
+                       (eegPower . ((delta . #x94)
+                                    (theta . #x42)
+                                    (lowAlpha . #x0b)
+                                    (highAlpha . #x64)
+                                    (lowBeta . #x4d)
+                                    (highBeta . #x3d)
+                                    (lowGamma . #x07)
+                                    (highGamma . #x05))))))))
+  
+  (ert-deftest mindwave-serial/filter-test-larger-data ()
+    "test the low level serial filter against a larger data set"
+    (let ((packet (concat (list #xAA #xAA #x20 #x02 #x00 #x83 #x18 #x00 #x00 #x94 #x00 #x00 #x42 #x00 #x00 #x0B #x00 #x00 #x64 #x00 #x00 #x4D #x00 #x00 #x3D #x00 #x00 #x07 #x00 #x00 #x05 #x04 #x0D #x05 #x3D #x34))))
+      (should-equal (mindwave-serial/parse-packets nil (concat packet packet))
+                    '(((poorSignalLevel . 0)
+                       (eSense . ((attention . 13) 
+                                  (meditation . 61)))
+                       (eegPower . ((delta . #x94)
+                                    (theta . #x42)
+                                    (lowAlpha . #x0b)
+                                    (highAlpha . #x64)
+                                    (lowBeta . #x4d)
+                                    (highBeta . #x3d)
+                                    (lowGamma . #x07)
+                                    (highGamma . #x05))))
+                      ((poorSignalLevel . 0)
+                       (eSense . ((attention . 13) 
+                                  (meditation . 61)))
+                       (eegPower . ((delta . #x94)
+                                    (theta . #x42)
+                                    (lowAlpha . #x0b)
+                                    (highAlpha . #x64)
+                                    (lowBeta . #x4d)
+                                    (highBeta . #x3d)
+                                    (lowGamma . #x07)
+                                    (highGamma . #x05))))))))
+  
+  (ert-deftest mindwave-serial/filter-test-alternate-data ()
     (let* ((pdata (concat (list #x02 #x00 
                                 #x80 #x02 #x00 #x80 
                                 #x16 #xff 
@@ -1479,13 +1663,12 @@ ____________________   ____________   ___________
                                 #x04 #x0D 
                                 #x05 #x3D)))
            (packet (concat (list #xAA #xAA 
-                                 (length pdata)) 
+                                 (length pdata))
                            pdata
                            (list (mindwave-serial/checksum-bytestream pdata)))))
-      (should-equal (mindwave-serial/filter-function nil packet)
+      (should-equal (mindwave-serial/parse-packets nil packet)
                     '(((poorSignalLevel . 0)
                        (blinkStrength . 255)
-                       (rawEeg . 128)
                        (eSense . ((attention . 13) 
                                   (meditation . 61)))
                        (eegPower . ((delta . #x94)
@@ -1495,15 +1678,98 @@ ____________________   ____________   ___________
                                     (lowBeta . #x4d)
                                     (highBeta . #x3d)
                                     (lowGamma . #x07)
-                                    (highGamma . #x05)))))))) 
+                                    (highGamma . #x05))))))))
   
+  (ert-deftest mindwave-serial/filter-raw-eeg-test ()
+    "test the lowlevel serial interface"
+    (let* ( (pdata1 (concat (list #x02 #x00 
+                                #x80 #x02 #x00 #b01111111 
+                                #x16 #xff
+                                #x83 #x18 #x00 #x00 #x94 #x00 #x00 #x42 #x00 #x00 #x0B #x00 #x00 #x64 #x00 #x00 #x4D #x00 #x00 #x3D #x00 #x00 #x07 #x00 #x00 #x05 
+                                #x04 #x0D 
+                                #x05 #x3D)))
+           (pdata2 (concat (list #x80 #x02 #x00 #x40)))
+           (pdata3 (concat (list #x80 #x02 #x00 #x80)))
+           (pdata4 (concat (list #x80 #x02 #x01 #x00)))
+           (big-packet (concat (list #xAA #xAA 
+                                 (length pdata1)) 
+                           pdata1
+                           (list (mindwave-serial/checksum-bytestream pdata1))
+                           
+                           (list #xAA #xAA
+                                 (length pdata2))
+                           pdata2
+                           (list (mindwave-serial/checksum-bytestream pdata2))
+                           
+                           (list #xAA #xAA
+                                 (length pdata3))
+                           pdata3
+                           (list (mindwave-serial/checksum-bytestream pdata3))
+                           
+                           (list #xAA #xAA
+                                 (length pdata4))
+                           pdata4
+                           (list (mindwave-serial/checksum-bytestream pdata4))))
+           (eeg-packet (concat (list #xAA #xAA 4)
+                               (list #x80 #x02 0 #x40
+                                     (mindwave-serial/checksum-bytestream (list #x80 #x02 0 #x40)))
+                               (list #xAA #xAA 4) 
+                               (list #x80 #x02 0 #x80
+                                     (mindwave-serial/checksum-bytestream (list #x80 #x02 0 #x80)))
+                               (list #xAA #xAA 4) 
+                               (list #x80 #x02 #x01 #x00
+                                     (mindwave-serial/checksum-bytestream (list #x80 #x02 1 #x00))))))
+      (setq mindwave-eeg-ring (make-ring mindwave-eeg-ring-size))
+      (should-equal (mindwave-serial/parse-packets nil big-packet)
+                    '(((poorSignalLevel . 0)
+                       (blinkStrength . 255)
+                       (rawEeg . 127)
+                       (eSense . ((attention . 13) 
+                                  (meditation . 61)))
+                       (eegPower . ((delta . #x94)
+                                    (theta . #x42)
+                                    (lowAlpha . #x0b)
+                                    (highAlpha . #x64)
+                                    (lowBeta . #x4d)
+                                    (highBeta . #x3d)
+                                    (lowGamma . #x07)
+                                    (highGamma . #x05))))
+                      ((rawEeg . 64))
+                      ((rawEeg . 128))
+                      ((rawEeg . 256))))
+                          
+      (should-equal (delq nil (ring-elements mindwave-eeg-ring))  ;ring-elements returns the order in newest first format. 
+                    '(256 128 64 127))
+      
+      (setq mindwave-eeg-ring (make-ring mindwave-eeg-ring-size))
+      (should-equal (mindwave-serial/parse-packets nil eeg-packet)
+                    '(((rawEeg . 64))
+                      ((rawEeg . 128))
+                      ((rawEeg . 256))))
+      (should-equal (delq nil (ring-elements mindwave-eeg-ring))
+                    '(256 128 64))
+      
+      (setq mindwave-eeg-ring (make-ring mindwave-eeg-ring-size))
+      (mindwave-serial/parse-packets nil big-packet)
+      (mindwave-serial/parse-packets nil eeg-packet)
+      (should-equal (delq nil (ring-elements mindwave-eeg-ring))
+                    '(256 128 64 256 128 64 127))))
   
+    
+  
+#+end_src
+
+****** Helpers for the serial filter
+	   Note that these helpers are all defined as macros, so that when mindwave-emacs is compiled it will (theoretically) run faster.
+
+#+name: mw-serial-filter-helpers
+#+begin_src emacs-lisp :result none :tangle yes
   (defmacro mindwave-serial/make-eeg-list (eegName b1)
     (let ((b2 (+ 1 b1))
           (b3 (+ 2 b1)))
-      `(cons ,eegName (mindwave/3byte-uword-to-int (aref output (+ ,b1 pos))
-                                                   (aref output (+ ,b2 pos))
-                                                   (aref output (+ ,b3 pos))))))
+      `(cons ,eegName (mindwave-serial/3byte-uword-to-int (aref output (+ ,b1 pos))
+                                                          (aref output (+ ,b2 pos))
+                                                          (aref output (+ ,b3 pos))))))
   
   (ert-deftest mindwave-serial/make-eeg-list-test ()
     ""
@@ -1515,19 +1781,19 @@ ____________________   ____________   ___________
   
   (defmacro mindwave-serial/checksum-bytestream (stream)
     "do a checksum calculation on a bytestream"                                      
-    `(lognot (logior -256 (mod (reduce '(lambda (x y) (mod (+ x y) 256)) 
+    `(lognot (logior -256 (mod (reduce #'(lambda (x y) (mod (+ x y) 256)) 
                                        ,stream) 
                                256))))
   
   
   (ert-deftest mindwave-serial/checksum-test ()
       "test the checksum macro"
-    (should (= (mindwave/checksum-bytestream (concat (list 0))) 255))
-    (should (= (mindwave/checksum-bytestream (concat (list 255))) 0))
-    (should (= (mindwave/checksum-bytestream (concat (list 255 1))) 255))
-    (should (= (mindwave/checksum-bytestream (concat (list 255 1 255 1 255 1))) 254))
-    (should (= (mindwave/checksum-bytestream (concat (list 0 1))) 254))
-    (should (= (mindwave/checksum-bytestream (concat (list #x02 #x00 #x83 #x18 #x00 #x00 #x94 #x00 #x00 #x42 #x00 #x00 #x0B #x00 #x00 #x64 #x00 #x00 #x4D #x00 #x00 #x3D #x00 #x00 #x07 #x00 #x00 #x05 #x04 #x0D #x05 #x3D))) #x34)))
+    (should (= (mindwave-serial/checksum-bytestream (concat (list 0))) 255))
+    (should (= (mindwave-serial/checksum-bytestream (concat (list 255))) 0))
+    (should (= (mindwave-serial/checksum-bytestream (concat (list 255 1))) 255))
+    (should (= (mindwave-serial/checksum-bytestream (concat (list 255 1 255 1 255 1))) 255))
+    (should (= (mindwave-serial/checksum-bytestream (concat (list 0 1))) 254))
+    (should (= (mindwave-serial/checksum-bytestream (concat (list #x02 #x00 #x83 #x18 #x00 #x00 #x94 #x00 #x00 #x42 #x00 #x00 #x0B #x00 #x00 #x64 #x00 #x00 #x4D #x00 #x00 #x3D #x00 #x00 #x07 #x00 #x00 #x05 #x04 #x0D #x05 #x3D))) #x34)))
   
   
   (defmacro mindwave-serial/2byte-sword-to-int (byte1 byte2)
@@ -1564,10 +1830,8 @@ ____________________   ____________   ___________
     (should (= (mindwave-serial/3byte-uword-to-int 1 0 0) 65536))
     (should (= (mindwave-serial/3byte-uword-to-int 255 255 255) #xffffff)))
   
-  
-  
-  
 #+end_src
+
 
 ***** middle layer
 	  The middle layer sits between the outgoing
@@ -1601,6 +1865,8 @@ ____________________   ____________   ___________
       (mindwave-if-in-list 'a '((a 1)) (setq r mw-result))
       (should r)))
   
+  ;; In the spirit of 3 strikes and refactor, once you touch this, or mindwave-serial/filter-function
+  ;; make sure to refactor them to a common function.
   (defun mindwave-comint-filter-function (output)
     "A helper hook to pass off output to the apropriate hooks"
     (when (and (stringp output) 
@@ -1640,7 +1906,7 @@ ____________________   ____________   ___________
 *** Current State
 
 	Shows the current state of the mindwave.  Note that there is no guarantees about the freshness of that data.  In particular, the blink strength is likely to be quite stale.
-
+	
 **** TODO talk about blink strength 
 
 #+begin_src emacs-lisp  :tangle yes  :results silent
@@ -1966,6 +2232,25 @@ There are two ways to make a brain ring, either through ~mindwave/make-brain-rin
                                                          (mindwave/make-brain-ring s s s s s s s s s s)))))))
 #+end_src
 	   
+*** Raw EEG Ring, a ring-storage of eeg values
+	Note, I have NO idea what the timing is going to be like on this yet, and how useful it is going to be, but what the heck, why not try?
+
+	The theory behind this is that you want a real fast function to store the values of the EEG waveform.  This basically gives emacs the chance to buffer the waveform.  Also, in my experiments, I found that there were certain times I wanted the waveform, but a lot of times I wasn't interested at all. 
+
+	Note, that you can just use the variable ~mindwave-eeg-ring~ directly.  To change the size of the ring, you can set/customize the variable ~mindwave-eeg-ring-size~ 
+
+#+name: mw-eeg-ring
+#+begin_src emacs-lisp  :tangle yes
+  (defcustom mindwave-eeg-ring-size 2048
+    "Size of the eeg ring to store.
+  Generally the sampling frequency of a mindwave is 512hz, so to get 
+  an 8 second ring, you would want a size of 4096."
+    :group 'mindwave
+    :type 'int)
+  
+  (defvar mindwave-eeg-ring (make-ring mindwave-eeg-ring-size))
+  
+#+end_src
 ** Configure
 *** Ask for raw output
 #+begin_src emacs-lisp :tangle yes

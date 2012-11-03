@@ -6,7 +6,7 @@
 ;; Author: Jonathan Arkell <jonnay@jonnay.net>
 ;; Created: 16 June 2012
 ;; Keywords: comint mindwave
-;; Version 0.1.4
+;; Version 0.1.5
 
 ;; This file is not part of GNU Emacs.
 ;; Released under the GPL     
@@ -17,6 +17,11 @@
 (require 'json)
 
 (defvar mindwave-debug nil)
+
+(defcustom mindwave-connect-with-serial nil
+  "Whether or not to connect with the serial port."
+  :type 'boolean
+  :group 'mindwave-emacs)
 
 (defcustom mindwave-serial-port "/dev/tty.MindWave"
   "Serial port that the mindwave is connected to."
@@ -47,11 +52,20 @@ senses connection problems.  This is generally between 0 and
 (defvar mindwave-buffer nil "Variable to store the buffer connected to the process")
 (defvar mindwave-process nil "Process that mindwave is connected")
 
+(defalias 'mindwave-connect 'mindwave-get-buffer)
+
 (defun mindwave-get-buffer ()
+  "Returns a mindwave buffer.
+The connection type is dependent on the `mindwvave-connection-type' variable."
+  (if mindwave-connect-with-serial
+      (setq mindwave-buffer (process-buffer (mindwave-make-serial-process)))
+    (mindwave-thinkgear-buffer)))
+
+(defun mindwave-thinkgear-buffer ()
   "Returns the buffer for the mindwave connection"
   (if (and mindwave-process (process-live-p mindwave-process))
       mindwave-process
-      (progn
+      (if (progn
         (setq mindwave-buffer (make-comint "mindwave" (cons mindwave-host mindwave-port)))
         (setq mindwave-process (get-buffer-process mindwave-buffer))
         (save-excursion
@@ -63,28 +77,138 @@ senses connection problems.  This is generally between 0 and
           (mindwave-get-raw nil)
           (sleep-for 1)
           (add-hook 'comint-preoutput-filter-functions 'mindwave-comint-filter-function nil t))
-        mindwave-buffer)))
+        mindwave-buffer))))
 
 (defun mindwave-make-serial-process ()
   "Creates a serial process for mindwave, or returns the current one if it exists.
 Note that this function assumes that you'll only ever have one mindwave connected."
-  (if (process-live-p mindwave-serial-process)
-      mindwave-serial-process
-    (setq mindwave-serial-process (make-serial-process :port mindwave-serial-port
-                                                       :speed mindwave-serial-baud
-                                                       :coding-system 'binary
-                                                       :filter mindwave-serial-filter-function))))
+  (setq mindwave-serial--bad-packets 0)
+  (setq mindwave-serial--total-packets 0)
+  (if (and mindwave-process
+           (process-live-p mindwave-process))
+      mindwave-process
+    (setq mindwave-process 
+          (apply 'make-serial-process 
+                 :port mindwave-serial-port
+                 :speed mindwave-serial-baud
+                 :coding-system 'binary
+                 :filter 'mindwave-serial/filter-function
+                 :buffer "*mindwave*"
+                 '()))))
 
 (defun mindwave-send-string (str)
   "Helper function to send STRING directly to the mindwave.
 Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configuration."
-  (comint-send-string mindwave-process str))
+  (if mindwave-connect-with-serial
+      (process-send-string mindwave-process str)
+      (comint-send-string mindwave-process str)))
 
 (defvar mindwave-hook '() "Hooks to run when mindwave gets standard input\nShould be a in a list that conforms to the json output.")
 (defvar mindwave-blink-hook '() "Hooks to run when mindwave gets blink input")
-(defvar mindwave-raw-eeg-hook '() "Hooks to run when mindwave gets raw eeg input.\n Note that you can get up to 512 of these events per second!")
 (defvar mindwave-e-sense-hook '() "Hooks to run when mindwave gets an eSense(tm) reading")
 (defvar mindwave-eeg-power-hook '() "Hooks to run when mindwave gets an eegPower reading")
+
+;; In the spirit of 3 strikes and refactor, once you touch this, or mindwave-serial/filter-function
+;; make sure to refactor them to a common function.
+
+(defun mindwave-serial/filter-function (process output)
+  "Sends input to parser and triggers the hooks."
+  (loop for brain
+        in (mindwave-serial/parse-packets process output)
+        do
+        (mindwave-if-in-list 'blinkStrength  brain
+          (mindwave/set-current 'blinkStrength  mw-result)
+          (run-hook-with-args 'mindwave-blink-hook mw-result))
+        (run-hook-with-args 'mindwave-hook brain)
+        (if (and (assoc 'poorSignalLevel brain)
+                 (> (cdr (assoc 'poorSignalLevel brain))
+                    mindwave-poor-signal-level))
+            (progn 
+              (when (assoc 'poorSignalLevel brain)
+                (mindwave/set-current 'poorSignalLevel (cdr (assoc 'poorSignalLevel brain)))
+                (run-hook-with-args 'mindwave-poor-signal-hook 
+                                    (cdr (assoc 'poorSignalLevel brain)))))
+          (progn
+            (mindwave-if-in-list 'poorSignalLevel brain
+              (mindwave/set-current 'poorSignalLevel mw-result)
+              (run-hook-with-args 'mindwave-poor-signal-hook mw-result))
+            (mindwave-if-in-list 'eSense brain
+              (mindwave/set-current 'eSense mw-result)
+              (run-hook-with-args mindwave-e-sense-hook mw-result))                
+            (mindwave-if-in-list 'eegPower brain
+              (mindwave/set-current 'eegPower mw-result)
+              (run-hook-with-args 'mindwave-eeg-power-hook mw-result)
+              (mindwave/brain-ring-update brain)))))
+  (when mindwave-debug
+    (with-current-buffer "*mindwave*"
+      (goto-char (point-max))
+      (if mindwave-debug (insert output)))))
+
+(defmacro mindwave-serial/make-eeg-list (eegName b1)
+  (let ((b2 (+ 1 b1))
+        (b3 (+ 2 b1)))
+    `(cons ,eegName (mindwave-serial/3byte-uword-to-int (aref output (+ ,b1 pos))
+                                                        (aref output (+ ,b2 pos))
+                                                        (aref output (+ ,b3 pos))))))
+
+(ert-deftest mindwave-serial/make-eeg-list-test ()
+  ""
+  (should (equal '(cons 'highGamma 
+                        (mindwave/3byte-uword-to-int (aref output (+ 23 pos))
+                                                     (aref output (+ 24 pos))
+                                                     (aref output (+ 25 pos))))
+                 (macroexpand '(mindwave-serial/make-eeg-list 'highGamma 23)))))
+
+(defmacro mindwave-serial/checksum-bytestream (stream)
+  "do a checksum calculation on a bytestream"                                      
+  `(lognot (logior -256 (mod (reduce #'(lambda (x y) (mod (+ x y) 256)) 
+                                     ,stream) 
+                             256))))
+
+
+(ert-deftest mindwave-serial/checksum-test ()
+    "test the checksum macro"
+  (should (= (mindwave-serial/checksum-bytestream (concat (list 0))) 255))
+  (should (= (mindwave-serial/checksum-bytestream (concat (list 255))) 0))
+  (should (= (mindwave-serial/checksum-bytestream (concat (list 255 1))) 255))
+  (should (= (mindwave-serial/checksum-bytestream (concat (list 255 1 255 1 255 1))) 255))
+  (should (= (mindwave-serial/checksum-bytestream (concat (list 0 1))) 254))
+  (should (= (mindwave-serial/checksum-bytestream (concat (list #x02 #x00 #x83 #x18 #x00 #x00 #x94 #x00 #x00 #x42 #x00 #x00 #x0B #x00 #x00 #x64 #x00 #x00 #x4D #x00 #x00 #x3D #x00 #x00 #x07 #x00 #x00 #x05 #x04 #x0D #x05 #x3D))) #x34)))
+
+
+(defmacro mindwave-serial/2byte-sword-to-int (byte1 byte2)
+  "Perform a 2's compliment on a pair of bytes"
+  `(if (> ,byte1 127)
+       (logior -65536 (+ (* 256 ,byte1) ,byte2))
+     (+ (* 256 ,byte1) ,byte2)))
+
+(ert-deftest mindwave-2s-compliment-test ()
+    "Test 2s compliment macros"
+  (should (= (mindwave-serial/2byte-sword-to-int 0 1) 1))
+  (should (= (mindwave-serial/2byte-sword-to-int 0 2) 2))
+  (should (= (mindwave-serial/2byte-sword-to-int 0 127) 127))
+  (should (= (mindwave-serial/2byte-sword-to-int 0 128) 128))
+  (should (= (mindwave-serial/2byte-sword-to-int 0 #x80) 128))
+  (should (= (mindwave-serial/2byte-sword-to-int 1 0) 256))
+  (should (= (mindwave-serial/2byte-sword-to-int #b11111111 #b11111111) -1)) 
+  (should (= (mindwave-serial/2byte-sword-to-int #b11111111 #b11111011) -5))
+  (should (= (mindwave-serial/2byte-sword-to-int #b11111111 #b11000000) -64))
+  (should (= (mindwave-serial/2byte-sword-to-int #b11111111 #b10000000) -128))
+  (should (= (mindwave-serial/2byte-sword-to-int #b11111111 #b00000000) -256))
+  (should (= (mindwave-serial/2byte-sword-to-int #b11000000 #b00000000) -16384))
+  (should (= (mindwave-serial/2byte-sword-to-int #b10000000 #b00000000) -32768)))
+
+(defmacro mindwave-serial/3byte-uword-to-int (byte1 byte2 byte3)
+  `(+ (* #x010000 ,byte1)
+      (* #x000100 ,byte2)
+      ,byte3))
+
+(ert-deftest mindwave-3byte-uword ()
+    "Test 3 byte uword macros"
+  (should (= (mindwave-serial/3byte-uword-to-int 0 0 1) 1))
+  (should (= (mindwave-serial/3byte-uword-to-int 0 1 0) 256))
+  (should (= (mindwave-serial/3byte-uword-to-int 1 0 0) 65536))
+  (should (= (mindwave-serial/3byte-uword-to-int 255 255 255) #xffffff)))
 
 (defun mindwave-if-in-list-run-hook (key list hook &rest funcs)
   (when (assoc key list)
@@ -113,6 +237,8 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
     (mindwave-if-in-list 'a '((a 1)) (setq r mw-result))
     (should r)))
 
+;; In the spirit of 3 strikes and refactor, once you touch this, or mindwave-serial/filter-function
+;; make sure to refactor them to a common function.
 (defun mindwave-comint-filter-function (output)
   "A helper hook to pass off output to the apropriate hooks"
   (when (and (stringp output) 
@@ -121,6 +247,9 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
           in (split-string output "\C-j" t)
           do
           (let ((brain (json-read-from-string out)))
+            (mindwave-if-in-list 'blinkStrength  brain
+              (mindwave/set-current 'blinkStrength  mw-result)
+              (run-hook-with-args 'mindwave-blink-hook mw-result))
             (run-hook-with-args 'mindwave-hook brain)
             (if (and (assoc 'poorSignalLevel brain)
                      (> (cdr (assoc 'poorSignalLevel brain))
@@ -137,10 +266,7 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
                   (run-hook-with-args 'mindwave-poor-signal-hook mw-result))
                 (mindwave-if-in-list 'eSense brain
                   (mindwave/set-current 'eSense mw-result)
-                  (run-hook-with-args mindwave-e-sense-hook mw-result))
-                (mindwave-if-in-list 'blinkstrength  brain
-                  (mindwave/set-current 'blinkStrength  mw-result)
-                  (run-hook-with-args 'mindwave-blink-hook mw-result))
+                  (run-hook-with-args mindwave-e-sense-hook mw-result))                
                 (mindwave-if-in-list 'eegPower brain
                   (mindwave/set-current 'eegPower mw-result)
                   (run-hook-with-args 'mindwave-eeg-power-hook mw-result)
@@ -204,7 +330,63 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
                                 (highBeta   . 0)
                                 (lowGamma   . 0)
                                 (highGamma  . 0)))
-                   (blinkStrength . 255)))))
+                   (blinkStrength . 255))))
+  (mindwave/set-current 'eegPower '(((delta      . 1)
+                                     (theta      . 1)
+                                     (lowAlpha   . 1)
+                                     (highAlpha  . 1)
+                                     (lowBeta    . 1)
+                                     (highBeta   . 1)
+                                     (lowGamma   . 1)
+                                     (highGamma  . 1))))
+  (should (equal mindwave/current
+                 '((poorSignalLevel . 200)
+                   (eSense . ((attention . 0)
+                              (meditation . 0)))
+                   (eegPower . ((delta      . 1)
+                                (theta      . 1)
+                                (lowAlpha   . 1)
+                                (highAlpha  . 1)
+                                (lowBeta    . 1)
+                                (highBeta   . 1)
+                                (lowGamma   . 1)
+                                (highGamma  . 1)))
+                   (blinkStrength . 255))))
+  (mindwave/set-current 'eegPower '(((delta      . 2)
+                                     (theta      . 2)
+                                     (lowAlpha   . 2)
+                                     (highAlpha  . 2)
+                                     (lowBeta    . 2)
+                                     (highBeta   . 2)
+                                     (lowGamma   . 2)
+                                     (highGamma  . 2))))
+  (should (equal mindwave/current
+                 '((poorSignalLevel . 200)
+                   (eSense . ((attention . 0)
+                              (meditation . 0)))
+                   (eegPower . ((delta      . 2)
+                                (theta      . 2)
+                                (lowAlpha   . 2)
+                                (highAlpha  . 2)
+                                (lowBeta    . 2)
+                                (highBeta   . 2)
+                                (lowGamma   . 2)
+                                (highGamma  . 2)))
+                   (blinkStrength . 0))))
+
+  (setq mindwave/current '((poorSignalLevel . 200)
+                           (eSense . ((attention . 0)
+                                      (meditation . 0)))
+                           (eegPower . ((delta      . 0)
+                                        (theta      . 0)
+                                        (lowAlpha   . 0)
+                                        (highAlpha  . 0)
+                                        (lowBeta    . 0)
+                                        (highBeta   . 0)
+                                        (lowGamma   . 0)
+                                        (highGamma  . 0)))
+                           (blinkStrength . 0)))
+  )
 
 (defconst mindwave/brain-ring-size 30)
 
@@ -338,6 +520,15 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
                             (mindwave/brain-ring-apply 'mindwave/safe-div 
                                                        collapsed-ring 
                                                        (mindwave/make-brain-ring s s s s s s s s s s)))))))
+
+(defcustom mindwave-eeg-ring-size 2048
+  "Size of the eeg ring to store.
+Generally the sampling frequency of a mindwave is 512hz, so to get 
+an 8 second ring, you would want a size of 4096."
+  :group 'mindwave
+  :type 'int)
+
+(defvar mindwave-eeg-ring (make-ring mindwave-eeg-ring-size))
 
 (defun mindwave-get-raw (raw)
   "Return raw output from mindwave.
