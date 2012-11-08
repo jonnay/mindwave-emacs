@@ -1,0 +1,191 @@
+#+title: Mindwave Emacs
+
+#+begin_src emacs-lisp :tangle mindwave-display.el :noweb yes
+;;; mindwave-display.el --- A simplified mindwave display file
+
+;; Copyright (C) 2012 Jonathan Arkell
+
+;; Author: Jonathan Arkell <jonnay@jonnay.net>
+;; Created: 16 June 2012
+;; Keywords: comint mindwave
+
+;; This file is not part of GNU Emacs.
+;; Released under the GPL     
+
+  (require 'mindwave-emacs)
+
+<<md-hooksetup>>
+<<md-showmind>>
+  (provide 'mindwave-display)
+
+#+end_src 
+
+* Changelog
+
+  - 0.1 :: Split from mindwave-emacs.org
+
+* mw-display, showing the user the current brain state.
+
+** TODO switch out from a timer to a hook instead
+
+** TODO use proper literate programming style 
+
+#+name: md-showmind
+#+begin_src emacs-lisp :tangle no
+  (defvar mw-display/timer nil
+    "Timer responsible for updating the output buffer")
+  
+  (defcustom mw-display/colors
+    '((delta . ("RoyalBlue2" . "RoyalBlue4"))
+      (theta . ("DeepSkyBlue2" . "DeepSkyBlue4"))
+      (lowAlpha . ("cyan2" . "cyan4"))
+      (highAlpha . ("aquamarine2" . "aquamarine4"))
+      (lowBeta . ("yellow2" . "yellow4"))
+      (highBeta . ("gold2" . "gold4"))
+      (lowGamma . ("tan2" . "tan4"))
+      (highGamma . ("firebrick2" . "firebrick4"))
+      (attention . ("MistyRose2" . "MistyRose4"))
+      (meditation . ("seashell2" . "seashell4")))
+    "The colors to use when displaying the graph."
+    :safe t
+    :group 'mindwave)
+  
+  (defun mw-display/show ()
+    "Shows the output of the mindwave device in a nicely formatted buffer."
+    (interactive)
+    (mindwave-get-buffer)
+    (let ((mwbuffer (get-buffer-create "*mindwave-status*")))
+      (when (not (timerp mw-display/timer))
+        (setq mw-display/timer (run-at-time t 1 'mw-display/write-values)))
+      (save-excursion
+        (buffer-disable-undo (set-buffer mwbuffer))
+        (add-hook 'kill-buffer-hook 'mw-display/kill-timer nil t))
+      (mw-display/write-values)
+      (pop-to-buffer mwbuffer)))
+  
+  (defun mw-display/kill-timer ()
+    "Removes the timer"
+    (when (timerp mw-display/timer)
+      (cancel-timer mw-display/timer)
+      (setq mw-display/timer nil)))
+  
+  (defun mw-display/write-values ()
+    "Actually write the values in the eeg buffer"
+    (let ((inhibit-read-only t))
+      (with-current-buffer "*mindwave-status*"
+        (erase-buffer)
+        (insert (propertize "   Mindwave Status  \n" 
+                            'face '(:background "white" :foreground "black")))
+        (insert (format "%3d Signal     Serial (%d/%d)\n\n" 
+                        (cdr (assoc 'poorSignalLevel mindwave/current))
+                        mindwave-serial--bad-packets
+                        mindwave-serial--total-packets))
+        (mw-display/insert-eeg 'delta 'eegPower)
+        (mw-display/insert-eeg 'theta 'eegPower)
+        (mw-display/insert-eeg 'lowAlpha 'eegPower)
+        (mw-display/insert-eeg 'highAlpha 'eegPower)
+        (mw-display/insert-eeg 'lowBeta 'eegPower)
+        (mw-display/insert-eeg 'highBeta 'eegPower)
+        (mw-display/insert-eeg 'lowGamma 'eegPower)
+        (mw-display/insert-eeg 'highGamma 'eegPower)
+        (insert "\n")
+        (mw-display/insert-eeg 'meditation 'eSense)
+        (mw-display/insert-eeg 'attention 'eSense)
+        (insert "\n")
+        (let ((current-pos (point)))
+          (insert (pp-to-string mindwave/current))
+          (goto-char current-pos)
+          (mw-display/write-hooks current-pos)
+          (vertical-motion 1)
+          (mw-display/insert-raw-eeg)
+          (mw-display/insert-signature)))))
+  
+  (defconst mw-display/2nd-column 30)
+  
+  (defun mw-display/write-hooks (top)
+    (let ((mw-display/hdp top))
+      (mw-display/show-hook 'mindwave-hook)
+      (mw-display/show-hook 'mindwave-blink-hook)
+      (mw-display/show-hook 'mindwave-e-sense-hook)
+      (mw-display/show-hook 'mindwave-eeg-power-hook)
+      (mw-display/show-hook 'mindwave/brain-ring-full-hook)))
+  
+  (defun mw-display/show-hook (hook-name)
+    (move-to-column mw-display/2nd-column t)
+    (if (null (symbol-value hook-name))
+        (progn
+          (move-to-column mw-display/2nd-column t)
+          (insert (format "Hook: %s - Empty" hook-name))
+          (vertical-motion 1))
+        (progn 
+          (move-to-column mw-display/2nd-column t)
+          (insert (format "Hook: %s" hook-name))
+          (vertical-motion 1)
+          (dolist (hook (symbol-value hook-name))
+            (move-to-column mw-display/2nd-column t)
+            (insert (format "  * %s" (symbol-name hook)))
+            (vertical-motion 1)))))
+  
+  (defvar mw-display/last-packet-count 0
+    "Total of packets received in the previous second.
+  This is to keep track of the sample rate.")
+  
+  (defun mw-display/insert-raw-eeg ()
+    (move-to-column mw-display/2nd-column t)
+    (insert (format "Sample Rate (Hz): %d/512" (- mindwave-serial--total-packets 
+                                                  mw-display/last-packet-count)))
+    (setq mw-display/last-packet-count mindwave-serial--total-packets)
+    (vertical-motion 2))
+  
+  (defun mw-display/insert-signature ()
+   (move-to-column mw-display/2nd-column t)
+   (insert (if (featurep 'mw-info-catcher)
+               (format "Signature: %s"
+                       (mapcar #'(lambda (v) 
+                                   (case v 
+                                     (-2 "⇓")
+                                     (-1 "↓")
+                                     (0  "-")
+                                     (1  "↑")
+                                     (2  "⇑")))
+                               mw-info-catcher/current-signature))
+             "mw-info-catcher not loaded")))
+  
+  
+  (defun mw-display/insert-eeg (band type)
+    "Insert an eeg string.
+  If TYPE is eeg, the bargraph displayed will be out of 1 000 000"
+    (let ((val (cdr (assoc band (cdr (assoc type mindwave/current))))))
+      (insert (format "%-10s - %7d " band val)
+              (if (equal type 'eegPower)
+                  (mw-display/graph val
+                                    100000 
+                                    band)
+                (mw-display/graph val 
+                                  100 
+                                  band))
+              "\n")))
+  
+  (defun mw-display/graph (val total band)
+    "Return a simple string bar graph from VAL and TOTAL"
+    (let* ((gsize (round (min (* (/ (float val) total) 
+                                 50)
+                              50)))
+           (esize (- 50 gsize)))
+      (concat (propertize (make-string esize ?\ )
+                          'face `(:background ,(cdr (cdr (assoc band mw-display/colors)))
+                                  :foreground "grey1"))
+              (propertize (make-string gsize ?\ )
+                          'face `(:background ,(car (cdr (assoc band mw-display/colors))) 
+                                 :foreground "grey1"))
+              (propertize (format " | %8s %12s " 
+                                  val
+                                  band)
+                          'face `(:background ,(car (cdr (assoc band mw-display/colors))) 
+                                 :foreground "grey1")))))
+#+end_src
+
+
+
+
+ 

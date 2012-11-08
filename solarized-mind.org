@@ -1,0 +1,167 @@
+#+title: Mindwave Emacs
+* Changelog
+  - v 0.1
+	- Moved to its own file
+
+#+begin_src emacs-lisp :tangle solarized-mind.el :noweb yes
+;;; solarized-mind.el --- changes emacs interface according to brainstate
+
+;; Copyright (C) 2012 Jonathan Arkell
+
+;; Author: Jonathan Arkell <jonnay@jonnay.net>
+;; Created: 16 June 2012
+;; Keywords: comint mindwave
+
+;; This file is not part of GNU Emacs.
+;; Released under the GPL     
+
+(require 'mindwave-emacs)
+
+<<sm-hooksetup>>
+<<sm-interface>>
+<<sm-medicursor>>
+<<sm-solarizer>>
+
+(provide 'solarized-mind)
+#+end_src 
+
+	Assuming you're using the solarized (dark) theme, lets say that you want the background color to change according to how attentive you are.
+	
+	- Attention :: Level of 'solarized purity of background color'.  The more attention, the more blue the solarized background.
+	- Meditation :: Cursor blink rate, from 0.25 (less meditative) to 1 (more)
+
+** Set up Hooks
+
+   There is a little bit of a tug of war going on.  Originally the
+   "brain ring" lived in solarized mind, but I decided that it was
+   too useful to leave stuck in there, and moved it into the main
+   mindwave library.
+
+   But, now I am under the impression that the brain-ring on the
+   mindwave library is too much like solarzied mind.  So expect some
+   push/pull between this library and the main, until it stabilizes.
+
+   We set up a ring that is used to store both the attention and the
+   meditation values.  Every second we store the data from the eSense
+   and put it in the ring.  Once the ring is full, we "collapse" the
+   ring, get the mean of those values, and stick them on the first
+   element of the list.
+
+   This provides a bit of continutity to the list.  It makes me
+   wonder if there is a better way to handle it to provide more
+   continuity overall, or even, if that is desirable?  Is it better
+   to have small local updates as to ones relaxation and attention
+   states, or is it better to have a global one?
+
+*** Digressions
+
+	One option is to store say 5-10 elements of history as part of
+	the ring.  A ring inside of a ring if you will.  On the first
+	pass through the 30 elements, the average would be in position 1,
+	then the next round of averages in position 2, and so on, until
+	all 5 are filled up.
+
+	At this point, one of two strategies could be followed:
+	
+	1. The first element is over-written with the latest new values,
+	   and that continues on.  This would give an overall reading
+	   that progresses forward in time.
+	2. The mean of the first 5 elements is put into position 1, and
+	   then positions 2-5 are cleared, and the strategy continues.
+	   This has the benifit of always providing a baseline context.
+
+**** TODO Set it up so that different strategies can be tried
+*** Code
+
+#+name: sm-hooksetup
+#+begin_src emacs-lisp :tangle no
+  (defun solarized-mind/brain-ring-full-hook (average)
+    "Set up hook to solarize your mind, and set up the medicursor."
+    (ring-insert mindwave/brain-ring average)
+    (solarized-mind/set-medicursor (cdr (assoc 'meditation 
+                                               (cdr (assoc 'eSense average)))))
+    (solarized-mind/set-background (cdr (assoc 'attention
+                                               (cdr (assoc 'eSense average))))))
+#+end_src
+	 
+** User-interface
+
+	Such as it is.  Right now there is only 2 commands:
+
+	- solarized-mind/start :: Start solarized mind, set up the hook,
+         and start mindwave.
+	- solarized-mind/stop :: Remove the solarized mind hook.  Doesn't
+         actually try and stop the mindwave connection however.
+
+#+name: sm-interface
+#+begin_src emacs-lisp :tangle no
+  (defun solarized-mind/start ()
+    (interactive)
+    (mindwave-get-buffer)
+    (when (not (member 'solarized-mind/brain-ring-full-hook 'mindwave/brain-ring-full-hook))
+      (message "Adding Mindwave hook")
+      (add-hook 'mindwave/brain-ring-full-hook 'solarized-mind/brain-ring-full-hook)))
+  
+  (defun solarized-mind/stop ()
+    (interactive)
+    (remove-hook 'mindwave/brain-ring-full-hook 'solarized-mind/brain-ring-full-hook))
+#+end_src
+
+** Medi-Curosr
+
+	 This is by far the easiest one to do, so lets do it first.
+
+#+name: sm-medicursor 
+#+begin_src emacs-lisp :tangle no
+  (defun solarized-mind/set-medicursor (med)
+    "Set the cursor to a value from the mindwave"
+    (setq blink-cursor-interval
+          (if ( = 0 med)
+              0.25
+              (+ 0.25
+                 (/ med 100.0)))))
+#+end_src
+
+#+begin_src emacs-lisp :tangle no
+  (ert-deftest sm-medicursor/setValidRates ()
+    (should (eql (solarized-mind/set-medicursor 100) 1.25))
+    (should (eql (solarized-mind/set-medicursor 50) 0.75))
+    (should (eql (solarized-mind/set-medicursor 0  ) 0.25)))
+#+end_src
+
+** Solarized Mind
+#+name: sm-solarizer
+#+begin_src emacs-lisp :tangle no
+    (require 'hexrgb)
+  
+  (defun solarized-mind/set-background (att)
+    "Sets the background color"
+    (set-background-color (solarized-mind/attention-to-rgb att))
+    ;(set-frame-parameter nil 'background-color (solarized-mind/attention-to-rgb att))
+    nil)
+  
+  ;(frame-parameter nil 'background-color)
+  (defun solarized-mind/attention-to-rgb (att)
+    "Takes an attention value (out of 100) and returns a color between #000000 and #002b36"
+    (let ((h (hexrgb-hue "#002b36"))
+          (s (hexrgb-saturation "#002b36"))
+          (v (hexrgb-value "#002b36")))
+      
+                           (hexrgb-hsv-to-hex h 
+                                              s 
+                                              (* v (/ att 100.0)))))
+
+
+
+;(set-face-attribute 'default nil :background (solarized-mind/attention-to-rgb 0))
+#+end_src
+
+#+begin_src emacs-lisp :tangle no
+  (solarized-mind/attention-to-rgb 100)
+  (solarized-mind/attention-to-rgb 50)
+  (solarized-mind/attention-to-rgb 0)
+  (set-frame-parameter nil 'background-color (solarized-mind/attention-to-rgb 0))
+#+end_src
+
+
+
