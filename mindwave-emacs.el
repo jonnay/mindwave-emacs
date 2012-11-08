@@ -1,4 +1,3 @@
-
 ;;; mindwave-emacs.el --- Neurosky mindwave support
 
 ;; Copyright (C) 2012 Jonathan Arkell
@@ -12,9 +11,13 @@
 ;; Released under the GPL     
 
 ;;; Commentary: 
-;; Please see the org-file that this was generated from.
+;; Please see the org-file that this was generated from. 
+
+
+;;; Code:
 
 (require 'json)
+(require 'cl)
 
 (defvar mindwave-debug nil)
 
@@ -49,8 +52,8 @@ senses connection problems.  This is generally between 0 and
 (defconst mindwave-serial-baud 57600)
 (defconst mindwave-auth-key 0000)
 
-(defvar mindwave-buffer nil "Variable to store the buffer connected to the process")
-(defvar mindwave-process nil "Process that mindwave is connected")
+(defvar mindwave-buffer nil "Variable to store the buffer connected to the process.")
+(defvar mindwave-process nil "Process that mindwave is connected.")
 
 (defalias 'mindwave-connect 'mindwave-get-buffer)
 
@@ -144,6 +147,116 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
       (goto-char (point-max))
       (if mindwave-debug (insert output)))))
 
+(defvar mindwave-serial--partial-packet nil)
+
+(defvar mindwave-serial--bad-packets 0)
+(defvar mindwave-serial--total-packets 0)
+
+(defun mindwave-serial/parse-packets (process output)
+  "Lower level serial filter function.
+  Returns a lit of mindwave-emacs compatible lists, with no guarantee of order.
+  Note that this also inserts the raw eeg into the raw eeg ring."
+  (when (not (null mindwave-serial--partial-packet))
+    (setq output (concat mindwave-serial--partial-packet output))
+    (setq mindwave-serial--partial-packet nil))
+  (let ((pos 0)
+        (end (length output))
+        (dlen 0)
+        (packet '())
+        (poorSignalLevel '())
+        (eSense '())
+        (eegPower '())
+        (blink '())
+        (raw nil)
+        (out-packets '()))
+    (setq mindwave-serial--partial-packet
+          (catch 'partial-packet-received
+            (while (< pos end)
+              (when  (<= end (+ pos 3))
+                (setq mindwave-serial--partial-packet (substring output pos))
+                (throw 'partial-packet-received (substring output pos)))
+              (if (and (= #xAA
+                          (aref output pos))
+                       (= #xAA
+                          (aref output (+ 1 pos))))
+                  (let ((plen (aref output (+ 2 pos))))
+                    (when (<= end (+ pos 3 plen))
+                      (setq mindwave-serial--partial-packet (substring output pos))
+                      (throw 'partial-packet-received (substring output pos)))
+                    (setq mindwave-serial--total-packets (1+ mindwave-serial--total-packets))
+                    (if (and (not (= 0 plen))
+                             (= (aref output (+ 3 plen pos))
+                                (mindwave-serial/checksum-bytestream
+                                 (substring output 
+                                            (+ pos 3) 
+                                            (+ plen pos 3)))))
+                        (mindwave-serial--parse-data)
+                      (progn 
+                        (setq mindwave-serial--bad-packets (1+ mindwave-serial--bad-packets))
+                        (if mindwave-debug (message "Mindwave: Checksum doesn't match, or got a zero length packet. [%s]" (substring output pos (+ 3 plen pos))))
+                        (setq pos (1+ pos)))))
+                (progn 
+                  (setq pos (1+ pos)))))
+            nil))
+    (nreverse (delq nil out-packets))))
+
+(defmacro mindwave-serial--parse-data ()
+  '(progn 
+     (setq pos (+ 3 pos))
+     (let ((innerlen (+ pos plen)))
+       (while (< pos innerlen)
+         (if (> #x80 (aref output pos))
+             (progn
+               (case (aref output pos)
+                 (#x02 (add-to-list 'packet (cons 'poorSignalLevel 
+                                                  (aref output (+ 1 pos)))))
+                 (#x04 (add-to-list 'eSense (cons 'attention 
+                                                  (aref output (+ 1 pos)))))
+                 (#x05 (add-to-list 'eSense (cons 'meditation 
+                                                  (aref output (+ 1 pos))) t))
+                 (#x16 (add-to-list 'packet (cons 'blinkStrength 
+                                                  (aref output (+ 1 pos))) t))
+                 (t (message "Mindwave: unknown unibyte type %s with data %s"
+                             (aref output pos)
+                             (aref output (+ 1 pos)))))
+               (setq pos (+ 2 pos)))
+           (progn 
+             (case (aref output pos)
+               (#x80 (setq raw 
+                           (mindwave-serial/2byte-sword-to-int (aref output (+ 2 pos))
+                                                               (aref output (+ 3 pos)))))
+               (#x83 (setq eegPower
+                           (list (mindwave-serial/make-eeg-list 'delta 2)
+                                 (mindwave-serial/make-eeg-list 'theta 5)
+                                 (mindwave-serial/make-eeg-list 'lowAlpha 8)
+                                 (mindwave-serial/make-eeg-list 'highAlpha 11)
+                                 (mindwave-serial/make-eeg-list 'lowBeta 14)
+                                 (mindwave-serial/make-eeg-list 'highBeta 17)
+                                 (mindwave-serial/make-eeg-list 'lowGamma 20)
+                                 (mindwave-serial/make-eeg-list 'highGamma 23))))
+               (208 (message "Mindwave Got Packet with id 208. Full packet: %s" (append output '()))) ;; Not entirely sure what these packets mean
+               (210 (message "Mindwave Got Packet with id 210. Full packet: %s" (append output '()))) ;;
+               (212 (message "Mindwave Got Packet with id 212. Full packet: %s" (append output '()))) ;;
+               (t (message "Mindwave unknown multibyte type %s" (aref output pos))))
+             (setq pos (+ pos 
+                          (aref output (+ pos 1)) 
+                          2)))))
+       (setq out-packets 
+             (cons (append packet 
+                           (if (not (null eSense))
+                               (cons (cons 'eSense eSense)
+                                     '()))                          
+                           (if (not (null eegPower))
+                               (cons (cons 'eegPower eegPower)
+                                     '())))
+                   out-packets))
+       (if raw (ring-insert mindwave-eeg-ring raw))
+       (setq raw '()
+             eSense '()
+             eegPower '()
+             packet '()
+             pos (+ pos 1)))))
+
 (defmacro mindwave-serial/make-eeg-list (eegName b1)
   (let ((b2 (+ 1 b1))
         (b3 (+ 2 b1)))
@@ -162,7 +275,7 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
 (defmacro mindwave-serial/checksum-bytestream (stream)
   "do a checksum calculation on a bytestream"                                      
   `(lognot (logior -256 (mod (reduce #'(lambda (x y) (mod (+ x y) 256)) 
-                                     ,stream) 
+                                      stream) 
                              256))))
 
 
@@ -210,10 +323,13 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
   (should (= (mindwave-serial/3byte-uword-to-int 1 0 0) 65536))
   (should (= (mindwave-serial/3byte-uword-to-int 255 255 255) #xffffff)))
 
+(eval-when-compile
+  (require 'cl))
+
 (defun mindwave-if-in-list-run-hook (key list hook &rest funcs)
   (when (assoc key list)
     (when (not (null funcs))
-      (dolist func funcs 
+      (dolist (func funcs) 
               (apply func (cdr (assoc key list)))))
     (run-hook-with-args hook (cdr (assoc key list)))))
 
@@ -526,9 +642,10 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
 Generally the sampling frequency of a mindwave is 512hz, so to get 
 an 8 second ring, you would want a size of 4096."
   :group 'mindwave
-  :type 'int)
+  :type 'int )
 
-(defvar mindwave-eeg-ring (make-ring mindwave-eeg-ring-size))
+(defvar mindwave-eeg-ring (make-ring mindwave-eeg-ring-size)
+  "A ring full of mindwave raw eeg values.")
 
 (defun mindwave-get-raw (raw)
   "Return raw output from mindwave.

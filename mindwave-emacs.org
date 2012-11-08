@@ -1,7 +1,7 @@
 #+title: Mindwave Emacs
 * Interface Mindwave with emacs
   
-#+begin_src emacs-lisp :tangle yes
+#+begin_src emacs-lisp :tangle yes :padline no
   ;;; mindwave-emacs.el --- Neurosky mindwave support
   
   ;; Copyright (C) 2012 Jonathan Arkell
@@ -9,7 +9,7 @@
   ;; Author: Jonathan Arkell <jonnay@jonnay.net>
   ;; Created: 16 June 2012
   ;; Keywords: comint mindwave
-  ;; Version 0.1.5
+  ;; Version 0.1.6
   
   ;; This file is not part of GNU Emacs.
   ;; Released under the GPL     
@@ -17,6 +17,8 @@
   ;;; Commentary: 
   ;; Please see the org-file that this was generated from. 
   
+  
+  ;;; Code:
 #+end_src
 
 mindwave-emacs is a chunk of elisp code that uses the
@@ -41,6 +43,14 @@ of an orgmode file.
   
 #+end_src
 
+** Byte Compiling
+
+   It is highly reccomended that you byte-compile mindwave-emacs.  Byte compiling the other files might not be a bad idea either.
+
+#+begin_src emacs-lisp :tangle no
+(byte-compile-file "./mindwave-emacs.el")
+#+end_src
+
 * Changelog
 
   - v 0.0 ::
@@ -60,7 +70,14 @@ of an orgmode file.
 	- remove raw hook from eeg display
 	- Raw serial connection, and raw eeg gathering finished.
     - update mw-display/write-values so it uses with-current-buffer and inhibit-read-only
-	- mw-display now shows teh total pakets recieved from teh serial interface, bad packets, and sample rate
+	- mw-display now shows the total pakets recieved from the serial interface, bad packets, and sample rate
+  - v 0.1.6
+	- Fix header line of main mindwave emacs
+	- Made mindwave-emacs byte-compileable
+	- mw-display shows a bit of information about the eeg
+	- mw display can show info from mw-info-catcher
+	- mw-info-catcher works
+   
 * Contributing
   
   Mindwave emacs needs YOU!
@@ -721,140 +738,157 @@ recording session.
 
 #+name: md-showmind
 #+begin_src emacs-lisp :tangle no
-    (defvar mw-display/timer nil
-      "Timer responsible for updating the output buffer")
-    
-    (defcustom mw-display/colors
-      '((delta . ("RoyalBlue2" . "RoyalBlue4"))
-        (theta . ("DeepSkyBlue2" . "DeepSkyBlue4"))
-        (lowAlpha . ("cyan2" . "cyan4"))
-        (highAlpha . ("aquamarine2" . "aquamarine4"))
-        (lowBeta . ("yellow2" . "yellow4"))
-        (highBeta . ("gold2" . "gold4"))
-        (lowGamma . ("tan2" . "tan4"))
-        (highGamma . ("firebrick2" . "firebrick4"))
-        (attention . ("MistyRose2" . "MistyRose4"))
-        (meditation . ("seashell2" . "seashell4")))
-      "The colors to use when displaying the graph."
-      :safe t
-      :group 'mindwave)
-    
-    (defun mw-display/show ()
-      "Shows the output of the mindwave device in a nicely formatted buffer."
-      (interactive)
-      (mindwave-get-buffer)
-      (let ((mwbuffer (get-buffer-create "*mindwave-status*")))
-        (when (not (timerp mw-display/timer))
-          (setq mw-display/timer (run-at-time t 1 'mw-display/write-values)))
-        (save-excursion
-          (buffer-disable-undo (set-buffer mwbuffer))
-          (add-hook 'kill-buffer-hook 'mw-display/kill-timer nil t))
-        (mw-display/write-values)
-        (pop-to-buffer mwbuffer)))
-    
-    (defun mw-display/kill-timer ()
-      "Removes the timer"
-      (when (timerp mw-display/timer)
-        (cancel-timer mw-display/timer)
-        (setq mw-display/timer nil)))
-    
-    (defun mw-display/write-values ()
-      "Actually write the values in the eeg buffer"
-      (let ((inhibit-read-only t))
-        (with-current-buffer "*mindwave-status*"
-          (erase-buffer)
-          (insert (propertize "   Mindwave Status  \n" 
-                              'face '(:background "white" :foreground "black")))
-          (insert (format "%3d Signal     Serial (%d/%d)\n\n" 
-                          (cdr (assoc 'poorSignalLevel mindwave/current))
-                          mindwave-serial--bad-packets
-                          mindwave-serial--total-packets))
-          (mw-display/insert-eeg 'delta 'eegPower)
-          (mw-display/insert-eeg 'theta 'eegPower)
-          (mw-display/insert-eeg 'lowAlpha 'eegPower)
-          (mw-display/insert-eeg 'highAlpha 'eegPower)
-          (mw-display/insert-eeg 'lowBeta 'eegPower)
-          (mw-display/insert-eeg 'highBeta 'eegPower)
-          (mw-display/insert-eeg 'lowGamma 'eegPower)
-          (mw-display/insert-eeg 'highGamma 'eegPower)
-          (insert "\n")
-          (mw-display/insert-eeg 'meditation 'eSense)
-          (mw-display/insert-eeg 'attention 'eSense)
-          (insert "\n")
-          (let ((current-pos (point)))
-            (insert (pp-to-string mindwave/current))
-            (goto-char current-pos)
-            (mw-display/write-hooks current-pos)
-            (vertical-motion 1)
-            (mw-display/insert-raw-eeg)))))
-    
-    (defconst mw-display/2nd-column 30)
-    
-    (defun mw-display/write-hooks (top)
-      (let ((mw-display/hdp top))
-        (mw-display/show-hook 'mindwave-hook)
-        (mw-display/show-hook 'mindwave-blink-hook)
-        (mw-display/show-hook 'mindwave-e-sense-hook)
-        (mw-display/show-hook 'mindwave-eeg-power-hook)
-        (mw-display/show-hook 'mindwave/brain-ring-full-hook)))
-    
-    (defun mw-display/show-hook (hook-name)
-      (move-to-column mw-display/2nd-column t)
-      (if (null (symbol-value hook-name))
-          (progn
+  (defvar mw-display/timer nil
+    "Timer responsible for updating the output buffer")
+  
+  (defcustom mw-display/colors
+    '((delta . ("RoyalBlue2" . "RoyalBlue4"))
+      (theta . ("DeepSkyBlue2" . "DeepSkyBlue4"))
+      (lowAlpha . ("cyan2" . "cyan4"))
+      (highAlpha . ("aquamarine2" . "aquamarine4"))
+      (lowBeta . ("yellow2" . "yellow4"))
+      (highBeta . ("gold2" . "gold4"))
+      (lowGamma . ("tan2" . "tan4"))
+      (highGamma . ("firebrick2" . "firebrick4"))
+      (attention . ("MistyRose2" . "MistyRose4"))
+      (meditation . ("seashell2" . "seashell4")))
+    "The colors to use when displaying the graph."
+    :safe t
+    :group 'mindwave)
+  
+  (defun mw-display/show ()
+    "Shows the output of the mindwave device in a nicely formatted buffer."
+    (interactive)
+    (mindwave-get-buffer)
+    (let ((mwbuffer (get-buffer-create "*mindwave-status*")))
+      (when (not (timerp mw-display/timer))
+        (setq mw-display/timer (run-at-time t 1 'mw-display/write-values)))
+      (save-excursion
+        (buffer-disable-undo (set-buffer mwbuffer))
+        (add-hook 'kill-buffer-hook 'mw-display/kill-timer nil t))
+      (mw-display/write-values)
+      (pop-to-buffer mwbuffer)))
+  
+  (defun mw-display/kill-timer ()
+    "Removes the timer"
+    (when (timerp mw-display/timer)
+      (cancel-timer mw-display/timer)
+      (setq mw-display/timer nil)))
+  
+  (defun mw-display/write-values ()
+    "Actually write the values in the eeg buffer"
+    (let ((inhibit-read-only t))
+      (with-current-buffer "*mindwave-status*"
+        (erase-buffer)
+        (insert (propertize "   Mindwave Status  \n" 
+                            'face '(:background "white" :foreground "black")))
+        (insert (format "%3d Signal     Serial (%d/%d)\n\n" 
+                        (cdr (assoc 'poorSignalLevel mindwave/current))
+                        mindwave-serial--bad-packets
+                        mindwave-serial--total-packets))
+        (mw-display/insert-eeg 'delta 'eegPower)
+        (mw-display/insert-eeg 'theta 'eegPower)
+        (mw-display/insert-eeg 'lowAlpha 'eegPower)
+        (mw-display/insert-eeg 'highAlpha 'eegPower)
+        (mw-display/insert-eeg 'lowBeta 'eegPower)
+        (mw-display/insert-eeg 'highBeta 'eegPower)
+        (mw-display/insert-eeg 'lowGamma 'eegPower)
+        (mw-display/insert-eeg 'highGamma 'eegPower)
+        (insert "\n")
+        (mw-display/insert-eeg 'meditation 'eSense)
+        (mw-display/insert-eeg 'attention 'eSense)
+        (insert "\n")
+        (let ((current-pos (point)))
+          (insert (pp-to-string mindwave/current))
+          (goto-char current-pos)
+          (mw-display/write-hooks current-pos)
+          (vertical-motion 1)
+          (mw-display/insert-raw-eeg)
+          (mw-display/insert-signature)))))
+  
+  (defconst mw-display/2nd-column 30)
+  
+  (defun mw-display/write-hooks (top)
+    (let ((mw-display/hdp top))
+      (mw-display/show-hook 'mindwave-hook)
+      (mw-display/show-hook 'mindwave-blink-hook)
+      (mw-display/show-hook 'mindwave-e-sense-hook)
+      (mw-display/show-hook 'mindwave-eeg-power-hook)
+      (mw-display/show-hook 'mindwave/brain-ring-full-hook)))
+  
+  (defun mw-display/show-hook (hook-name)
+    (move-to-column mw-display/2nd-column t)
+    (if (null (symbol-value hook-name))
+        (progn
+          (move-to-column mw-display/2nd-column t)
+          (insert (format "Hook: %s - Empty" hook-name))
+          (vertical-motion 1))
+        (progn 
+          (move-to-column mw-display/2nd-column t)
+          (insert (format "Hook: %s" hook-name))
+          (vertical-motion 1)
+          (dolist (hook (symbol-value hook-name))
             (move-to-column mw-display/2nd-column t)
-            (insert (format "Hook: %s - Empty" hook-name))
-            (vertical-motion 1))
-          (progn 
-            (move-to-column mw-display/2nd-column t)
-            (insert (format "Hook: %s" hook-name))
-            (vertical-motion 1)
-            (dolist (hook (symbol-value hook-name))
-              (move-to-column mw-display/2nd-column t)
-              (insert (format "  * %s" (symbol-name hook)))
-              (vertical-motion 1)))))
-    
-    (defvar mw-display/last-packet-count 0
-      "Total of packets received in the previous second.
-    This is to keep track of the sample rate.")
-    
-    (defun mw-display/insert-raw-eeg ()
-      (move-to-column mw-display/2nd-column t)
-      (insert (format "Sample Rate (Hz): %d/512" (- mindwave-serial--total-packets 
-                                                    mw-display/last-packet-count)))
-      (setq mw-display/last-packet-count mindwave-serial--total-packets))
-    
-    (defun mw-display/insert-eeg (band type)
-      "Insert an eeg string.
-    If TYPE is eeg, the bargraph displayed will be out of 1 000 000"
-      (let ((val (cdr (assoc band (cdr (assoc type mindwave/current))))))
-        (insert (format "%-10s - %7d " band val)
-                (if (equal type 'eegPower)
-                    (mw-display/graph val
-                                      100000 
-                                      band)
-                  (mw-display/graph val 
-                                    100 
-                                    band))
-                "\n")))
-    
-    (defun mw-display/graph (val total band)
-      "Return a simple string bar graph from VAL and TOTAL"
-      (let* ((gsize (round (min (* (/ (float val) total) 
-                                   50)
-                                50)))
-             (esize (- 50 gsize)))
-        (concat (propertize (make-string esize ?\ )
-                            'face `(:background ,(cdr (cdr (assoc band mw-display/colors)))
-                                    :foreground "grey1"))
-                (propertize (make-string gsize ?\ )
-                            'face `(:background ,(car (cdr (assoc band mw-display/colors))) 
-                                   :foreground "grey1"))
-                (propertize (format " | %8s %12s " 
-                                    val
+            (insert (format "  * %s" (symbol-name hook)))
+            (vertical-motion 1)))))
+  
+  (defvar mw-display/last-packet-count 0
+    "Total of packets received in the previous second.
+  This is to keep track of the sample rate.")
+  
+  (defun mw-display/insert-raw-eeg ()
+    (move-to-column mw-display/2nd-column t)
+    (insert (format "Sample Rate (Hz): %d/512" (- mindwave-serial--total-packets 
+                                                  mw-display/last-packet-count)))
+    (setq mw-display/last-packet-count mindwave-serial--total-packets)
+    (vertical-motion 2))
+  
+  (defun mw-display/insert-signature ()
+   (move-to-column mw-display/2nd-column t)
+   (insert (if (featurep 'mw-info-catcher)
+               (format "Signature: %s"
+                       (mapcar #'(lambda (v) 
+                                   (case v 
+                                     (-2 "⇓")
+                                     (-1 "↓")
+                                     (0  "-")
+                                     (1  "↑")
+                                     (2  "⇑")))
+                               mw-info-catcher/current-signature))
+             "mw-info-catcher not loaded")))
+  
+  
+  (defun mw-display/insert-eeg (band type)
+    "Insert an eeg string.
+  If TYPE is eeg, the bargraph displayed will be out of 1 000 000"
+    (let ((val (cdr (assoc band (cdr (assoc type mindwave/current))))))
+      (insert (format "%-10s - %7d " band val)
+              (if (equal type 'eegPower)
+                  (mw-display/graph val
+                                    100000 
                                     band)
-                            'face `(:background ,(car (cdr (assoc band mw-display/colors))) 
-                                   :foreground "grey1")))))
+                (mw-display/graph val 
+                                  100 
+                                  band))
+              "\n")))
+  
+  (defun mw-display/graph (val total band)
+    "Return a simple string bar graph from VAL and TOTAL"
+    (let* ((gsize (round (min (* (/ (float val) total) 
+                                 50)
+                              50)))
+           (esize (- 50 gsize)))
+      (concat (propertize (make-string esize ?\ )
+                          'face `(:background ,(cdr (cdr (assoc band mw-display/colors)))
+                                  :foreground "grey1"))
+              (propertize (make-string gsize ?\ )
+                          'face `(:background ,(car (cdr (assoc band mw-display/colors))) 
+                                 :foreground "grey1"))
+              (propertize (format " | %8s %12s " 
+                                  val
+                                  band)
+                          'face `(:background ,(car (cdr (assoc band mw-display/colors))) 
+                                 :foreground "grey1")))))
 #+end_src
 
 ** Example four: connecting via raw serial, and storing raw EEG along with timestamp
@@ -1169,12 +1203,21 @@ Of course, this is purely just for the data alone, not for any kind of other sto
    Grabs the EEG ring, and snapshots it to a file as a CSV list
 
 #+begin_src emacs-lisp
-  (defun mw-snapshot-eeg (name)
-    "Copy the EEG ring into a file, and save it."
+  (defun mw-snapshot-eeg (file)
+    "Copy the EEG ring into a file, and save it to a buffer."
+    (interactive)
+    (let ((snap (mw-snapshot/get-eeg-csv)))
+      (with-temp-file (expand-file-name (read-file-name "File to save EEG state to?")) 
+        (insert snap))))
+  
+  (defun mw-snapshot/get-eeg-csv ()
+    "Return the snapshotted EEG as a string of CSV"
     (let ((eeg-ring (reverse (ring-elements mindwave-eeg-ring))))
-      (concat (mapcar #'(lambda (e) (concat (number-to-string e) 
-                                            ",")) 
-                      eeg-ring))))
+      (apply 'concat (mapcar #'(lambda (e) (concat (number-to-string e) 
+                                                   ",")) 
+                             eeg-ring))))
+  
+  
 #+end_src
 
 ** Example nine: Info catcher
@@ -1217,14 +1260,14 @@ Of course, this is purely just for the data alone, not for any kind of other sto
   ;;; Code:
   
   (defcustom mw-info-catcher/standard-values
-    '((highGamma 59550 6228 969)
-      (lowGamma 74317 4136 740)
-      (highBeta 99682 9760 2514)
-      (lowBeta 192759 9293 2469)
-      (highAlpha 200756 15279 3444)
-      (lowAlpha 148409 11907 3287)
-      (theta 379694 55279 10394)
-      (delta 992959 174173 19435))
+    '((highGamma   50000   1000  500)
+      (lowGamma    50000   1000  500)
+      (highBeta   100000   2000  1000)
+      (lowBeta    100000   2000  1000)
+      (highAlpha  100000   2000  1000)
+      (lowAlpha   150000   2000  1000)
+      (theta      300000   2000  1000)
+      (delta     1000000   4000  2000))
     "A list of values to determine whether an important EEG event has happened.
   
   The list is in the format of:
@@ -1233,7 +1276,7 @@ Of course, this is purely just for the data alone, not for any kind of other sto
     (highBeta ....)
     ...)")
   
-  (defcustom mw-info-catcher/sensitivity 0
+  (defcustom mw-info-catcher/sensitivity 0.25
     "A float representing how sensitive the catcher is.  1 would mean every event matters."
     :type 'float)
   
@@ -1241,10 +1284,14 @@ Of course, this is purely just for the data alone, not for any kind of other sto
     "A list of signatures that the info-catcher will ignore."
     :type 'list)
   
+  (defvar mw-info-catcher/current-signature '()
+    "The current EEG signature")
+  
   (defun mw-info-catcher/mw-hook (brain)
     "Hook that handles the catching of information.
   Argument BRAIN is a standard mindwave brain list."
     (let ((sig (mw-info-catcher/get-eegPower-signaure (cdr (assoc 'eegPower brain)))))
+      (setq mw-info-catcher/current-signature sig)
       (when (not (member sig mw-info-catcher/ignore-signatures))
         (mw-info-catcher/prompt-for-catch sig))))
   
@@ -1265,33 +1312,6 @@ Of course, this is purely just for the data alone, not for any kind of other sto
   describe this function.
   Argument EEG-POWER is the incoming eegPower portion of the mindwave brain info."
     (mapcar #'mw-info-catcher/gen-signature eeg-power))
-  
-  ;; 2 greater then max, 1, between max and sensitivity. 0
-  (defun mw-info-catcher/gen-signature-older (v)
-    (let* ((band (car v))
-           (value (+ 0.0 (cdr v)))
-           (highest (second (assoc band mw-info-catcher/standard-values)))
-           (median (third (assoc band mw-info-catcher/standard-values)))
-           (lowest (fourth (assoc band mw-info-catcher/standard-values))))
-      (cond ((>= value median)
-             (min 2
-                  (floor (+ (/ (- value median)
-                               median)
-                            mw-info-catcher/sensitivity))))
-            ((<= value median)
-             (max -2
-                  (ceiling (- (/ (- value median)
-                                 median)
-                              mw-info-catcher/sensitivity)))))))
-  
-  (defun mw-info-catcher/gen-signature-old (v)
-    (let
-      (cond ((>= value median)
-             (min 2 (floor (* (/ value
-                                 (- highest median))
-                              mw-info-catcher/sensitivity))))
-            ((< value median)
-             (- value median)))))
   
   (defun mw-info-catcher/gen-signature (v)
     (let* ((band (car v))
@@ -1388,6 +1408,7 @@ Of course, this is purely just for the data alone, not for any kind of other sto
 ** Basic House keeping
 #+begin_src emacs-lisp :tangle yes
 (require 'json)
+(require 'cl)
 #+end_src
 
 *** Debug mode
@@ -1463,8 +1484,8 @@ Of course, this is purely just for the data alone, not for any kind of other sto
 **** Connection variables - Base (both Think Gear Connector and serial)
 
 #+begin_src emacs-lisp :tangle yes
-(defvar mindwave-buffer nil "Variable to store the buffer connected to the process")
-(defvar mindwave-process nil "Process that mindwave is connected")
+(defvar mindwave-buffer nil "Variable to store the buffer connected to the process.")
+(defvar mindwave-process nil "Process that mindwave is connected.")
 #+end_src
 
 **** Return lowlevel connection variables 
@@ -2051,7 +2072,7 @@ ____________________   ____________   ___________
   (defmacro mindwave-serial/checksum-bytestream (stream)
     "do a checksum calculation on a bytestream"                                      
     `(lognot (logior -256 (mod (reduce #'(lambda (x y) (mod (+ x y) 256)) 
-                                       ,stream) 
+                                        stream) 
                                256))))
   
   
@@ -2107,10 +2128,14 @@ ____________________   ____________   ___________
 	  ~mindwave-<type->hook~ hooks, and the process hooks.
 
 #+begin_src emacs-lisp :tangle yes
+  
+  (eval-when-compile
+    (require 'cl))
+  
   (defun mindwave-if-in-list-run-hook (key list hook &rest funcs)
     (when (assoc key list)
       (when (not (null funcs))
-        (dolist func funcs 
+        (dolist (func funcs) 
                 (apply func (cdr (assoc key list)))))
       (run-hook-with-args hook (cdr (assoc key list)))))
   

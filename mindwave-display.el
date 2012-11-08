@@ -76,7 +76,10 @@
       (let ((current-pos (point)))
         (insert (pp-to-string mindwave/current))
         (goto-char current-pos)
-        (mw-display/write-hooks current-pos)))))
+        (mw-display/write-hooks current-pos)
+        (vertical-motion 1)
+        (mw-display/insert-raw-eeg)
+        (mw-display/insert-signature)))))
 
 (defconst mw-display/2nd-column 30)
 
@@ -104,6 +107,32 @@
           (insert (format "  * %s" (symbol-name hook)))
           (vertical-motion 1)))))
 
+(defvar mw-display/last-packet-count 0
+  "Total of packets received in the previous second.
+This is to keep track of the sample rate.")
+
+(defun mw-display/insert-raw-eeg ()
+  (move-to-column mw-display/2nd-column t)
+  (insert (format "Sample Rate (Hz): %d/512" (- mindwave-serial--total-packets 
+                                                mw-display/last-packet-count)))
+  (setq mw-display/last-packet-count mindwave-serial--total-packets)
+  (vertical-motion 2))
+
+(defun mw-display/insert-signature ()
+ (move-to-column mw-display/2nd-column t)
+ (insert (if (featurep 'mw-info-catcher)
+             (format "Signature: %s"
+                     (mapcar #'(lambda (v) 
+                                 (case v 
+                                   (-2 "⇓")
+                                   (-1 "↓")
+                                   (0  "-")
+                                   (1  "↑")
+                                   (2  "⇑")))
+                             mw-info-catcher/current-signature))
+           "mw-info-catcher not loaded")))
+
+
 (defun mw-display/insert-eeg (band type)
   "Insert an eeg string.
 If TYPE is eeg, the bargraph displayed will be out of 1 000 000"
@@ -129,15 +158,10 @@ If TYPE is eeg, the bargraph displayed will be out of 1 000 000"
                                 :foreground "grey1"))
             (propertize (make-string gsize ?\ )
                         'face `(:background ,(car (cdr (assoc band mw-display/colors))) 
-                               :foreground "grey1"
-                               :weight "ultra-bold"))
+                               :foreground "grey1"))
             (propertize (format " | %8s %12s " 
                                 val
                                 band)
                         'face `(:background ,(car (cdr (assoc band mw-display/colors))) 
-                               :foreground "grey1"
-                               :weight "ultra-bold")))))
-
-  
-
+                               :foreground "grey1")))))
   (provide 'mindwave-display)
