@@ -834,7 +834,7 @@ ____________________   ____________   ___________
   (defmacro mindwave-serial/checksum-bytestream (stream)
     "do a checksum calculation on a bytestream"                                      
     `(lognot (logior -256 (mod (reduce #'(lambda (x y) (mod (+ x y) 256)) 
-                                        stream) 
+                                        ,stream) 
                                256))))
   
   

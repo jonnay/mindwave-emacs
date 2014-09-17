@@ -273,9 +273,9 @@ Please use `mindwave-authorize' or `mindwave-get-raw' for user-level configurati
                  (macroexpand '(mindwave-serial/make-eeg-list 'highGamma 23)))))
 
 (defmacro mindwave-serial/checksum-bytestream (stream)
-  "do a checksum calculation on a bytestream"                                      
+  "doq a checksum calculation on a bytestream"                                      
   `(lognot (logior -256 (mod (reduce #'(lambda (x y) (mod (+ x y) 256)) 
-                                      stream) 
+                                      ,stream) 
                              256))))
 
 
