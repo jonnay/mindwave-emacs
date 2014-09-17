@@ -14,9 +14,9 @@
 	  - 1-2 second :: eeg
 	  - 1-2 min :: eeg power
 	  - 1-2 hour :: 23-erisian data 
+  - prompt the user about what the hell just happened. 
 
 * Example thresholds
-
 ** High Gamma
    - Minimum ::  1000
    - Maximum :: 60000
@@ -26,6 +26,7 @@
    - Minimum ::   3000
    - Maximum :: 150000
    - Median ::    1200
+
 
 * 1-2 second frames
 	
@@ -77,13 +78,49 @@
     (let ((sig (mw-info-catcher/get-eegPower-signaure (cdr (assoc 'eegPower brain)))))
       (setq mw-info-catcher/current-signature sig)
       (when (not (member sig mw-info-catcher/ignore-signatures))
-        (mw-info-catcher/prompt-for-catch sig))))
-  
-  (defun mw-info-catcher/prompt-for-catch (sig)
+        (mw-info-catcher/prompt-for-catch sig brain))))  
+#+end_src
+
+  Since we are able to check on the attention of the user, let's not prompt them when they are presumably in the state of flow.
+
+  Oh, also in the middle of a keyboard macro.  Lets just jump right out so that we don't mess with them.  I am guessing there are other times we don't want to be an attention hamburgler too.
+
+#+begin_src emacs-lisp   
+  (defun mw-info-catcher/prompt-for-catch (sig brain)
     "Prompt the user for some information on what just happened.
   Argument SIG is a simple list representing the signature."
-    (message "Just got this: %s" sig))
-  
+    (if (and (not executing-kbd-macro)
+             (> (mindwave/access-in 'eSense 'attention mindwave/current)
+                40))
+        (message "Just got this: %s.  I would be prompting you" sig)
+      (message "Just got this %s, but not prompting you, you're too busy" sig)))
+#+end_src
+
+
+** The dreaded prompt
+
+   Let's iterate this one through.  First crack is a prompt that is highly visible and annoying.  It should be very apparent that something is happening and I REALLY need your attention.
+
+   The worry is that you're sitting there, writing code and suddenly my crazy program interrupts you just enough to steal GUI focus, but not enough to steal brain-focus.  In theory you're not very focused anyway due to low attention, so lets hamburgle that attention.
+
+   So, we display quick help text, then get out of the way. 
+
+#+begin_src emacs-lisp 
+      (defun mw-info-catcher/prompt (sig brain) 
+        "Promp the  user for some information on what just happened.
+      Argument SIG is a simple list representing the signature of the event."
+        (beep)
+        (let ((key (read-key "Mindwave Event!  [SPC] or [RET] to cancel, or letter to describe.")))
+          (case key
+            (13 (message "Skipped"))
+            (32 (message "Skipped"))
+            )))              
+      
+#+end_src
+
+
+** Signature code 
+#+begin_src emacs-lisp   
   (add-hook 'mindwave-hook 'mw-info-catcher/mw-hook)
   
   (defun mw-info-catcher/get-eegPower-signaure (eeg-power)
